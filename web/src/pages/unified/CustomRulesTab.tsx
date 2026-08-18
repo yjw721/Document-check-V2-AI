@@ -12,6 +12,7 @@ import type {
   Severity,
 } from "../../lib/types";
 import { useToast } from "../../components/ui/Toast";
+import { onRulesChanged } from "../../lib/events";
 
 const genId = (p: string) => p + Math.random().toString(16).slice(2, 10);
 
@@ -22,7 +23,9 @@ export default function CustomRulesTab() {
   const [folded, setFolded] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    api.customRules().then((d) => setData({ groups: d.groups || [] }));
+    const load = () => api.customRules().then((d) => setData({ groups: d.groups || [] }));
+    load();
+    return onRulesChanged(load);
   }, []);
 
   if (!data) return null;

@@ -25,6 +25,7 @@ export const UNI_TABS = [
   { key: "builtinRules", name: "内置标准规则", ic: "⚙️" },
   { key: "builtinDicts", name: "内置词库", ic: "📖" },
   { key: "aiCreate", name: "AI 规则词库智能生成", ic: "🤖" },
+  { key: "scan", name: "一键扫描清理", ic: "🧹" },
 ] as const;
 
 export const SEV_LABEL: Record<string, string> = { high: "严重", medium: "一般", low: "轻微" };

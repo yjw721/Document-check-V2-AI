@@ -15,6 +15,7 @@ import io
 import os
 import tempfile
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
@@ -46,6 +47,13 @@ from checkers.rule_filter import (
     filter_rules_payload as rule_filter_rules_payload,
     filter_entries_payload as rule_filter_entries_payload,
 )
+from checkers.rule_scan import (
+    scan_all as rule_scan_all,
+    clean_items as rule_scan_clean,
+    cleanable_ids as rule_scan_cleanable_ids,
+    build_backup_text as rule_scan_backup_text,
+    build_backup_csv as rule_scan_backup_csv,
+)
 from checkers.ai_memory import (
     payload as ai_memory_payload, set_enabled as ai_memory_set_enabled,
     is_enabled as ai_memory_is_enabled, learn_sample as ai_memory_learn,
@@ -72,6 +80,8 @@ os.makedirs(REPORT_DIR, exist_ok=True)
 
 # 服务端内存态（本地单机工具，进程内保存即可）
 _STATE: Dict[str, Any] = {"results": [], "last_scan_time": None, "scan_seconds": 0.0}
+# 规则词库扫描结果内存态（最近一次扫描，供刷新页面后继续查看 / 清理校验）
+_SCAN_STATE: Dict[str, Any] = {"last": None}
 # 范本解析草案内存态：所有上传范本仅在本地内存处理（BytesIO），不落盘、零网络
 _TEMPLATE_STATE: Dict[str, Any] = {"parser": None}
 _MAX_TEMPLATE_MB = 50
@@ -92,6 +102,7 @@ STAGE_NAMES = {
     "wordbank": "行业词库规则匹配",
     "summary": "结果汇总",
     "ai": "AI 智能核验",
+    "scan": "规则词库扫描",
 }
 
 
@@ -133,6 +144,7 @@ def _task_snapshot(tid: str) -> Optional[Dict[str, Any]]:
             "stage_text": t["stage_text"],
             "logs": list(t["logs"]),
             "error": t["error"],
+            "result": t.get("result"),
         }
 
 
@@ -666,6 +678,94 @@ def api_wordbanks_import(payload: Dict[str, Any]):
     """批量解析词条文本（CSV/TXT），返回解析后的 Entry 列表。"""
     raw = payload.get("text", "")
     return {"entries": parse_entries_import(raw)}
+
+
+# ---------------------------------------------------------------------------
+# 规则与词库一键扫描管理（扫描分类 / 备份导出 / 清理）
+# ---------------------------------------------------------------------------
+@app.post("/api/scan/start")
+def api_scan_start():
+    """启动规则词库后台扫描任务（进度经 /api/task/{tid} 轮询）。"""
+    tid = _make_task([])
+    threading.Thread(target=_run_scan_task, args=(tid,), daemon=True).start()
+    return {"ok": True, "task_id": tid}
+
+
+def _run_scan_task(tid: str) -> None:
+    """后台执行规则词库扫描：进度写入任务，结果写入任务与内存态。"""
+    try:
+        hook = _task_hook(tid)
+        result = rule_scan_all(hook)
+        with _TASK_LOCK:
+            t = _TASKS.get(tid)
+            if not t:
+                return
+            t["status"] = "done"
+            t["progress"] = 100.0
+            t["stage_text"] = "扫描完成"
+            t["result"] = result
+        _SCAN_STATE["last"] = result
+    except Exception as exc:  # noqa: BLE001 - 扫描失败任务置 error
+        with _TASK_LOCK:
+            t = _TASKS.get(tid)
+            if t and t["status"] == "running":
+                t["status"] = "error"
+                t["error"] = f"{type(exc).__name__}：{str(exc)[:120]}"
+
+
+@app.get("/api/scan/last")
+def api_scan_last():
+    """最近一次扫描结果（刷新页面后仍可查看）。"""
+    return {"ok": True, "result": _SCAN_STATE.get("last")}
+
+
+def _scan_items_by_ids(ids: List[str]) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """按 item_id 从最新扫描结果中取条目；ids 为空时取全部待清理项。"""
+    result = rule_scan_all()
+    index = {it["item_id"]: it for it in result["items"]}
+    if not ids:
+        ids = rule_scan_cleanable_ids(result)
+    items = [index[i] for i in ids if i in index]
+    return items, result
+
+
+@app.post("/api/scan/export")
+def api_scan_export(payload: Dict[str, Any]):
+    """导出待清理数据备份（txt / csv）；ids 为空时导出全部无效 + 重复非保留项。"""
+    from fastapi.responses import Response
+    fmt = (payload.get("format") or "txt").lower()
+    ids = payload.get("ids") or []
+    items, _result = _scan_items_by_ids(ids)
+    if not items:
+        raise HTTPException(400, "没有可导出的条目（当前无无效或重复项）")
+    if fmt == "csv":
+        content = "\ufeff" + rule_scan_backup_csv(items)
+        media = "text/csv; charset=utf-8"
+        ext = "csv"
+    else:
+        content = rule_scan_backup_text(items, title="手动备份导出")
+        media = "text/plain; charset=utf-8"
+        ext = "txt"
+    fname = f"scan_backup_{time.strftime('%Y%m%d_%H%M%S')}.{ext}"
+    return Response(
+        content=content, media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@app.post("/api/scan/clean")
+def api_scan_clean(payload: Dict[str, Any]):
+    """按 item_id 清理无效 / 重复条目；ids 为空时清理全部待清理项。
+
+    安全红线：normal 与重复保留项一律拒绝；记忆样本不触碰；
+    清理前自动备份到 reports/scan_backups/。
+    """
+    ids = payload.get("ids") or []
+    ok, msg, info = rule_scan_clean(ids)
+    if not ok:
+        raise HTTPException(400, msg)
+    _SCAN_STATE["last"] = None  # 数据已变化，前端将重新扫描刷新
+    return {"ok": True, "message": msg, **info}
 
 
 # ---------------------------------------------------------------------------

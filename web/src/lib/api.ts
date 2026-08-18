@@ -19,6 +19,8 @@ import type {
   IssuesData,
   OverviewData,
   RulesData,
+  ScanCleanResp,
+  ScanResult,
   SettingsData,
   TaskSnapshot,
   TaskStartResult,
@@ -103,6 +105,13 @@ export const api = {
   saveWordbanks: (data: WordbanksData) =>
     request<{ ok: boolean; filtered_entries?: number; rejected?: RuleRejected[] }>("POST", "/api/wordbanks", data),
   wordbankImport: (body: { text: string }) => request<WordImportResult>("POST", "/api/wordbanks/import", body),
+
+  /* ---------- 规则词库一键扫描 ---------- */
+  scanStart: () => request<TaskStartResult>("POST", "/api/scan/start"),
+  scanLast: () => request<{ ok: boolean; result: ScanResult | null }>("GET", "/api/scan/last"),
+  scanExport: (body: { ids: string[]; format: "txt" | "csv" }) =>
+    request<Blob>("POST", "/api/scan/export", body, { blob: true }),
+  scanClean: (body: { ids: string[] }) => request<ScanCleanResp>("POST", "/api/scan/clean", body),
 
   /* ---------- 范本解析（词库与标准规则批量导入） ---------- */
   templateDraft: () => request<TemplateDraft>("GET", "/api/template/draft"),

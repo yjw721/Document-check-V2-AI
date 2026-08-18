@@ -8,6 +8,7 @@ import EmptyState from "../../components/common/EmptyState";
 import { api } from "../../lib/api";
 import type { WordEntry, WordGroup, WordbanksData } from "../../lib/types";
 import { useToast } from "../../components/ui/Toast";
+import { onRulesChanged } from "../../lib/events";
 
 const genId = (p: string) => p + Math.random().toString(16).slice(2, 10);
 
@@ -20,7 +21,9 @@ export default function WordbanksTab() {
   const [importText, setImportText] = useState("");
 
   useEffect(() => {
-    api.wordbanks().then((d) => setData({ groups: d.groups || [] }));
+    const load = () => api.wordbanks().then((d) => setData({ groups: d.groups || [] }));
+    load();
+    return onRulesChanged(load);
   }, []);
 
   if (!data) return null;

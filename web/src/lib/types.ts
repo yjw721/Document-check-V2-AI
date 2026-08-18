@@ -74,6 +74,7 @@ export interface TaskSnapshot {
   stage_text: string;
   logs: string[];
   error: string;
+  result?: ScanResult | null;
 }
 
 export interface TaskStartResult {
@@ -410,4 +411,61 @@ export interface IssueStateBody {
   file_index: number;
   issue_index: number;
   state: IssueState;
+}
+
+/* ---------- 规则词库一键扫描 ---------- */
+export type ScanCategory = "invalid" | "duplicate" | "normal";
+
+export interface ScanItem {
+  item_id: string;
+  source: "custom_rules" | "wordbanks" | "dictionary";
+  source_label: string;
+  group_id: string;
+  group_label: string;
+  entity_id: string;
+  line_no: number | null;
+  kind: "rule" | "entry" | "line";
+  name: string;
+  pattern: string;
+  suggestion: string;
+  match_mode: string;
+  enabled: boolean;
+  tag: string;
+  category: ScanCategory;
+  reason: string;
+  keep: boolean;
+  source_tag: string;
+}
+
+export interface ScanSourceStats {
+  label: string;
+  scanned: number;
+  invalid: number;
+  duplicate: number;
+  normal: number;
+}
+
+export interface ScanStats {
+  scanned: number;
+  invalid: number;
+  duplicate: number;
+  duplicate_cleanable: number;
+  normal: number;
+  cleanable: number;
+  sources: number;
+  by_source: Record<string, ScanSourceStats>;
+}
+
+export interface ScanResult {
+  time: string;
+  stats: ScanStats;
+  items: ScanItem[];
+}
+
+export interface ScanCleanResp {
+  ok: boolean;
+  message: string;
+  removed: number;
+  backup_file?: string;
+  stats?: ScanStats;
 }
