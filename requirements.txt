@@ -1,0 +1,14 @@
+# =========================================================================
+# 文档低级错误检查工具 —— 依赖清单（离线安装用）
+# 安装方式（内网离线机）：
+#   1. 在联网机执行：pip download -r requirements.txt -d wheels --only-binary=:all:
+#   2. 把 wheels 目录拷到内网机，执行：
+#      pip install --no-index --find-links=wheels -r requirements.txt
+# 说明：均为本地解析/服务库，无任何联网行为
+# =========================================================================
+
+fastapi>=1.0                      # Web 服务框架（本地 FastAPI 后端）
+uvicorn>=0.20                     # ASGI 服务器
+python-multipart>=0.0.6          # 文件上传解析（multipart）
+python-docx>=1.0.0                # Word 文档解析与报告生成
+openpyxl>=3.1.0                   # Excel 文档解析

@@ -1,0 +1,32 @@
+{
+  "meta": {
+    "name": "自定义词库",
+    "offline_only": true,
+    "desc": "用户在界面【词库管理】中自建的离线词库，本地持久化，零联网。"
+  },
+  "groups": [
+    {
+      "id": "wb_demo",
+      "name": "敏感词示例库",
+      "module": "text_word",
+      "scope": "all",
+      "enabled": true,
+      "entries": [
+        {
+          "id": "e_demo1",
+          "keyword": "_tmp",
+          "tag": "临时占位",
+          "suggestion": "文档中残留「_tmp」占位符，请确认是否为草稿遗留内容。",
+          "enabled": true
+        },
+        {
+          "id": "e_demo2",
+          "keyword": "TODO",
+          "tag": "待办标记",
+          "suggestion": "文档中出现「TODO」待办标记，正式归档前请处理或删除。",
+          "enabled": true
+        }
+      ]
+    }
+  ]
+}

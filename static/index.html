@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>文档核验中心 · 全息渐变版</title>
+    <meta name="description" content="文档核验中心 · 离线保密版 · 全息渐变 UI" />
+    <script>
+      /* 主题防闪烁：首帧渲染前读取本地偏好 */
+      (function () {
+        try {
+          var t = localStorage.getItem("docchk_theme");
+          document.documentElement.setAttribute("data-theme", t === "light" ? "light" : "dark");
+        } catch (e) {
+          document.documentElement.setAttribute("data-theme", "dark");
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-B8GHuVqw.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-Chz7rCmp.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>

@@ -1,0 +1,64 @@
+# =========================================================================
+# 中英文语法错误检测词库（本地正则）
+# -------------------------------------------------------------------------
+# 格式：  正则模式|说明
+#   - 每行一条，[|] 分隔正则与问题说明
+#   - 以 # 开头的行是注释，不会被检测
+#   - 正则对文本不区分大小写匹配；中文按字面匹配
+#   - 用户可自行增删 / 修改正则（需符合 Python re 语法，非法行会被跳过）
+# 说明：本类命中为【疑似语法问题】，仅供人工复核，非确定性判定。
+# =========================================================================
+
+# ---------------- 中文：助词 / 副词重复 ----------------
+的的|连续出现助词「的的」，疑似重复或多打一个「的」
+地地|连续出现助词「地地」，疑似重复或多打一个「地」
+得得|连续出现助词「得得」，疑似重复或多打一个「得」
+非常非常|程度副词「非常」重复堆叠，建议保留一个
+十分十分|程度副词「十分」重复堆叠，建议保留一个
+特别特别|程度副词「特别」重复堆叠，建议保留一个
+
+# ---------------- 中文：句式杂糅 ----------------
+根据[^。；！？\n]{1,24}显示|句式杂糅：「根据…显示」应改为「根据…」或「…显示」，二选一
+通过[^。；！？\n]{1,30}使|句式杂糅：「通过…使…」缺少主语，建议改为「通过…，…」或「…使…」
+
+# ---------------- 中文：关联词搭配不当 ----------------
+只要[^。；！？\n]{0,20}才|关联词搭配不当：「只要」应与「就」搭配，此处疑似误用「才」
+只有[^。；！？\n]{0,20}就|关联词搭配不当：「只有」应与「才」搭配，此处疑似误用「就」
+不但[^。；！？\n]{0,20}反而|关联词搭配不当：「不但…反而」句式有误，常用「不但不…反而」或删去「不但」
+虽然[^。；！？\n]{0,20}而且|关联词搭配不当：「虽然」应与「但是」搭配，此处疑似误用「而且」
+因为[^。；！？\n]{0,20}因此|关联词重复：「因为…因此」语义重复，建议保留其一
+
+# ---------------- 英文：主谓一致 ----------------
+\bi\s+is\b|主谓一致错误：「I is」应为「I am」
+\byou\s+was\b|主谓一致错误：「you was」应为「you were」
+\bhe\s+are\b|主谓一致错误：「he are」应为「he is」
+\bshe\s+am\b|主谓一致错误：「she am」应为「she is」
+\bwe\s+is\b|主谓一致错误：「we is」应为「we are」
+\bthey\s+is\b|主谓一致错误：「they is」应为「they are」
+\bis\s+you\b|主谓一致错误：「is you」应为「are you」
+\bwas\s+we\b|主谓一致错误：「was we」应为「were we」
+\bhas\s+they\b|主谓一致错误：「has they」应为「have they」
+\bare\s+he\b|主谓一致错误：「are he」应为「is he」
+\bhave\s+she\b|主谓一致错误：「have she」应为「has she」
+
+# ---------------- 英文：情态动词 / 时态 ----------------
+\b(?:should|would|can|could|may|might|must)\s+has\b|情态动词后应接动词原形：「… has」应为「… have」
+\b(?:have|has|had)\s+went\b|过去分词误用：「… went」应为「… gone」
+\b(?:teached|goed|comed|runned|breaked|buyed|catched|holded|taked|thinked|telled|builded|sleeped|knowed|speaked)\b|不规则动词过去式误用（如 teached 应为 taught）
+
+# ---------------- 英文：比较级 / 最高级重复 ----------------
+\b(?:more\s+better|more\s+worse|more\s+worst|more\s+easier|more\s+faster|most\s+best|most\s+worst|most\s+busiest)\b|比较级 / 最高级重复（如 more better 应为 better）
+
+# ---------------- 英文：不定冠词误用 ----------------
+\ba\s+(?![a-z]*(?:university|unique|united|useful|user|usual|one|once|european|ewe|euro|us|ufo|uk)\b)[aeiou][a-z]*\b|不定冠词误用：「a + 元音发音开头单词」应为「an + …」（如 a apple → an apple）
+\ban\s+(?![a-z]*(?:hour|honest|honor|heir|herb)\b)[b-df-hj-np-tv-z][a-z]*\b|不定冠词误用：「an + 辅音发音开头单词」应为「a + …」（如 an book → a book）
+
+# ---------------- 英文：双重否定 ----------------
+\b(?:don't|doesn't|didn't|never)\s+(?:have|get|got|see|know|find)\s+[^.!?\n]{0,8}\b(?:no|nobody|nothing|nowhere|none)\b|疑似双重否定误用（如 don't have no money，应为 don't have any money）
+
+# ---------------- 英文：人称 / 介词搭配 ----------------
+\bbetween\s+[^.!?\n]{0,30}\band\s+I\b|「between … and I」应为「between … and me」
+\baccording\s+with\b|介词搭配错误：应为「according to」
+\bdepend\s+of\b|介词搭配错误：应为「depend on」
+\bconsist\s+with\b|介词搭配错误：「consist of」表示组成；「与…一致」应用「consistent with」
+\bbased\s+of\b|介词搭配错误：应为「based on」

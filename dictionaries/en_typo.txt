@@ -1,0 +1,93 @@
+# =========================================================================
+# 英文常见拼写错误词库
+# -------------------------------------------------------------------------
+# 格式：  错误拼写|正确拼写
+#   - 每行一条，[|] 分隔错误与正确写法
+#   - 以 # 开头的行是注释，不会被检测
+#   - 用户可随时增删词条（如发现新错词，直接加一行即可）
+# 匹配方式：整词匹配（大小写不敏感，带单词边界），避免误伤正常词
+#   例：recieve 只在作为独立单词出现时才提示，receiving 不会误报
+# 变形词自动兼容：匹配词根后附带的常见词缀（ing / es / ed / ly / s / d），
+#   例：recieved → 建议 received；recieving → 建议 receiving
+# 本类仅为【疑似】提示，是否确为拼写错误由人工核对。
+# =========================================================================
+
+recieve|receive
+definately|definitely
+occured|occurred
+seperate|separate
+goverment|government
+adress|address
+wich|which
+accomodate|accommodate
+commited|committed
+embarass|embarrass
+existance|existence
+independant|independent
+maintainance|maintenance
+millenium|millennium
+noticable|noticeable
+occassion|occasion
+publically|publicly
+recomend|recommend
+relevent|relevant
+succesful|successful
+wether|whether
+beleive|believe
+buisness|business
+calender|calendar
+catagory|category
+concensus|consensus
+enviroment|environment
+freind|friend
+lenght|length
+neccessary|necessary
+occurence|occurrence
+parallell|parallel
+persistant|persistent
+posession|possession
+priviledge|privilege
+profesional|professional
+suprise|surprise
+tommorow|tomorrow
+unforseen|unforeseen
+withold|withhold
+arguement|argument
+certian|certain
+consistant|consistent
+developement|development
+intresting|interesting
+ammount|amount
+begining|beginning
+choosen|chosen
+dilemna|dilemma
+dissapoint|disappoint
+exagerate|exaggerate
+fasinating|fascinating
+febuary|february
+foriegn|foreign
+gurantee|guarantee
+heigth|height
+immediatly|immediately
+intelectual|intellectual
+littel|little
+managment|management
+neccesarily|necessarily
+occasionaly|occasionally
+potatos|potatoes
+probabely|probably
+propoganda|propaganda
+rember|remember
+sincerly|sincerely
+specificaly|specifically
+succesfully|successfully
+tendancy|tendency
+thier|their
+tounge|tongue
+truely|truly
+untill|until
+vacum|vacuum
+vegatarian|vegetarian
+wierd|weird
+writting|writing
+teh|the

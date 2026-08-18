@@ -1,0 +1,51 @@
+{
+  "ui": {
+    "sidebar_default_collapsed": false,
+    "animation_enabled": true,
+    "theme_accent": "teal",
+    "table_row_height": "cozy",
+    "page_size": 20,
+    "theme_scheme": "holographic",
+    "accent_color": ""
+  },
+  "detection": {
+    "concurrency": 2,
+    "parse_timeout": 30,
+    "auto_ignore_blank": true,
+    "abnormal_popup": true,
+    "fluency_sensitivity": "normal"
+  },
+  "report": {
+    "default_dir": "",
+    "include_cover": true,
+    "detail_columns": [
+      "index",
+      "location",
+      "type",
+      "severity",
+      "detail",
+      "suggestion"
+    ]
+  },
+  "parse": {
+    "enable_pdf": true,
+    "enable_legacy": false,
+    "scan_pdf_skip": "auto"
+  },
+  "log_cache": {
+    "cache_expire_days": 7,
+    "run_log": false
+  },
+  "ai": {
+    "enabled": false,
+    "mode": "local",
+    "base_url": "http://127.0.0.1:11434",
+    "api_key": "",
+    "model": "qwen2.5:7b",
+    "timeout": 60,
+    "max_chars": 3000,
+    "max_requests": 10,
+    "ref_enabled": true,
+    "ref_max_chars": 2000
+  }
+}

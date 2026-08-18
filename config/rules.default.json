@@ -1,0 +1,381 @@
+{
+  "meta": {
+    "config_name": "文档低级错误检查规则配置",
+    "config_version": "1.1.0",
+    "description": "本地规则配置文件，纯离线生效。enabled=false 可关闭对应检测项。severity 可选 low/medium/high（对应界面：轻微/一般/严重）。",
+    "offline_only": true
+  },
+  "global": {
+    "max_file_size_mb": 100,
+    "max_issues_per_file": 800,
+    "skip_hidden_files": true
+  },
+  "word": {
+    "full_width_space": {
+      "enabled": true,
+      "severity": "low",
+      "title": "多余全角空格",
+      "desc": "正文中出现全角空格（U+3000），通常为排版遗留字符",
+      "suggestion": "删除全角空格，改用首行缩进或段落格式控制排版"
+    },
+    "leading_space": {
+      "enabled": true,
+      "severity": "low",
+      "title": "段首冗余空格",
+      "desc": "段落开头存在空格/制表符用于手工缩进",
+      "suggestion": "删除段首手工空格，使用段落样式的首行缩进 2 字符"
+    },
+    "trailing_space": {
+      "enabled": true,
+      "severity": "low",
+      "title": "段尾多余空格",
+      "desc": "段落末尾存在多余空白字符",
+      "suggestion": "删除段落末尾的空白字符"
+    },
+    "invalid_whitespace": {
+      "enabled": true,
+      "severity": "low",
+      "title": "无效空白字符",
+      "desc": "存在零宽字符、不换行空格、垂直制表符等不可见异常字符",
+      "suggestion": "清除不可见控制字符，避免复制粘贴带入异常编码"
+    },
+    "multi_space": {
+      "enabled": true,
+      "severity": "low",
+      "title": "连续多个空格",
+      "desc": "文中出现两个及以上连续半角空格",
+      "min_count": 2,
+      "suggestion": "合并为单个空格或改用制表位/表格对齐"
+    },
+    "punct_mix": {
+      "enabled": true,
+      "severity": "medium",
+      "title": "中英文标点混用",
+      "desc": "中文语境中使用了英文标点（如 , . ; : ? !）",
+      "suggestion": "统一为中文全角标点：，。；：？！"
+    },
+    "punct_repeat": {
+      "enabled": true,
+      "severity": "medium",
+      "title": "连续重复标点",
+      "desc": "出现连续重复的标点符号，如「，，」「。。」「！！」",
+      "allow_ellipsis": true,
+      "suggestion": "删除重复标点，保留单个；省略号请使用规范的「……」"
+    },
+    "bracket_unpaired": {
+      "enabled": true,
+      "severity": "medium",
+      "title": "括号引号不配对",
+      "desc": "段落内括号或引号数量不成对",
+      "suggestion": "检查并补全成对的括号、引号，注意全角半角一致"
+    },
+    "empty_heading": {
+      "enabled": true,
+      "severity": "high",
+      "title": "空标题",
+      "desc": "标题样式段落内容为空，会导致目录出现空白条目",
+      "suggestion": "补全标题文字或删除该空标题段落"
+    },
+    "empty_paragraph": {
+      "enabled": true,
+      "severity": "low",
+      "title": "连续空段落",
+      "desc": "存在多个连续空段落用于手工调节间距",
+      "max_continuous": 1,
+      "suggestion": "删除多余空段落，使用段前段后间距控制版式"
+    },
+    "manual_line_break": {
+      "enabled": true,
+      "severity": "low",
+      "title": "大量无效换行",
+      "desc": "同一段落内存在过多手动换行符（Shift+Enter）",
+      "max_breaks": 3,
+      "suggestion": "确认是否应拆分为独立段落，删除无效手动换行"
+    },
+    "numbering_break": {
+      "enabled": true,
+      "severity": "high",
+      "title": "自动编号断裂",
+      "desc": "自动编号列表中断，被普通段落打断导致编号重新计数风险",
+      "suggestion": "检查列表样式连续性，避免手工插入普通段落打断编号"
+    },
+    "manual_number_sequence": {
+      "enabled": true,
+      "severity": "high",
+      "title": "手工序号不连续",
+      "desc": "手工输入的序号（1. 2. 3. / 一、二、三、/（1）（2））出现跳号、重复或倒序",
+      "suggestion": "修正序号顺序，或改用自动编号避免人工维护出错"
+    },
+    "number_format_mixed": {
+      "enabled": true,
+      "severity": "medium",
+      "title": "序号格式混乱",
+      "desc": "同一层级混用多种序号格式（如「1.」与「1、」与「(1)」混排）",
+      "suggestion": "统一同一层级的序号格式与标点样式"
+    },
+    "table_empty_row": {
+      "enabled": true,
+      "severity": "medium",
+      "title": "表格空白行",
+      "desc": "表格中存在整行单元格全为空的空白行",
+      "suggestion": "删除空白行或补全数据"
+    },
+    "table_empty_col": {
+      "enabled": true,
+      "severity": "medium",
+      "title": "表格空白列",
+      "desc": "表格中存在整列单元格全为空的空白列",
+      "suggestion": "删除空白列或补全数据"
+    },
+    "table_no_header_repeat": {
+      "enabled": true,
+      "severity": "medium",
+      "title": "跨页表格无重复表头",
+      "desc": "行数较多的表格未设置标题行跨页重复，跨页后无表头",
+      "min_rows": 12,
+      "suggestion": "选中首行，设置「表格属性-行-在各页顶端以标题行形式重复出现」"
+    },
+    "table_empty_header_cell": {
+      "enabled": true,
+      "severity": "medium",
+      "title": "表格表头空单元格",
+      "desc": "表格首行存在空单元格，表头不完整",
+      "suggestion": "补全表头名称，保证列含义清晰"
+    },
+    "image_broken": {
+      "enabled": true,
+      "severity": "high",
+      "title": "图片/对象加载异常",
+      "desc": "存在图片引用缺失、嵌入对象损坏或零字节图片资源",
+      "suggestion": "重新插入图片或对象，确认嵌入而非链接引用"
+    },
+    "blank_redundant_content": {
+      "enabled": true,
+      "severity": "low",
+      "title": "空白冗余内容",
+      "desc": "文档结尾存在大量空段落，或存在仅含空白字符的伪内容段落",
+      "suggestion": "清理文档尾部与正文中的空白冗余内容"
+    }
+  },
+  "excel": {
+    "formula_error": {
+      "enabled": true,
+      "severity": "high",
+      "title": "公式报错",
+      "desc": "单元格出现 #N/A、#VALUE!、#DIV/0!、#REF!、#NAME?、#NULL!、#NUM! 等错误值",
+      "error_values": ["#N/A", "#VALUE!", "#DIV/0!", "#REF!", "#NAME?", "#NULL!", "#NUM!", "#SPILL!", "#CALC!", "#GETTING_DATA"],
+      "suggestion": "检查公式引用范围与除数，必要时使用 IFERROR 兜底处理"
+    },
+    "number_stored_as_text": {
+      "enabled": true,
+      "severity": "medium",
+      "title": "数字文本化存储",
+      "desc": "看似数字的内容以文本格式存储，会导致求和统计失效",
+      "suggestion": "使用「分列」或「选择性粘贴-数值」将文本转换为数字格式"
+    },
+    "format_chaos": {
+      "enabled": true,
+      "severity": "low",
+      "title": "单元格格式混乱",
+      "desc": "同一列中数字格式/对齐方式不统一，或日期与文本混排",
+      "min_samples": 3,
+      "suggestion": "统一整列的数字格式、对齐方式与日期格式"
+    },
+    "empty_row": {
+      "enabled": true,
+      "severity": "medium",
+      "title": "整行空白",
+      "desc": "数据区域中间存在完全空白的整行，会打断数据连续性",
+      "suggestion": "删除空白行，保持数据区域连续"
+    },
+    "empty_col": {
+      "enabled": true,
+      "severity": "medium",
+      "title": "整列空白",
+      "desc": "数据区域中间存在完全空白的整列",
+      "suggestion": "删除空白列或补全该列数据"
+    },
+    "empty_header_cell": {
+      "enabled": true,
+      "severity": "high",
+      "title": "表头空单元格",
+      "desc": "首行表头存在空单元格，字段含义缺失",
+      "suggestion": "补全表头字段名称"
+    },
+    "redundant_merged_cells": {
+      "enabled": true,
+      "severity": "medium",
+      "title": "多余合并单元格",
+      "desc": "存在内容为空的合并单元格，或数据区域内的合并单元格影响筛选排序",
+      "suggestion": "取消数据区域内的合并单元格，改用跨列居中或补齐数据"
+    },
+    "empty_sheet": {
+      "enabled": true,
+      "severity": "medium",
+      "title": "无意义空白工作表",
+      "desc": "工作表无任何有效内容，属冗余表",
+      "suggestion": "删除空白工作表"
+    },
+    "sheet_name_invalid": {
+      "enabled": true,
+      "severity": "medium",
+      "title": "工作表名称异常",
+      "desc": "工作表名称为空、为默认名（Sheet1/工作表1）、含非法特殊字符或首尾空格",
+      "illegal_chars": [":", "\\", "/", "?", "*", "[", "]"],
+      "flag_default_name": true,
+      "suggestion": "改为语义明确的名称，去除非法字符与首尾空格"
+    },
+    "trailing_space_cell": {
+      "enabled": true,
+      "severity": "low",
+      "title": "单元格首尾空格",
+      "desc": "文本单元格首尾存在多余空格，会导致匹配、查找失败",
+      "suggestion": "使用 TRIM 函数或查找替换清除首尾空格"
+    },
+    "full_width_space_cell": {
+      "enabled": true,
+      "severity": "low",
+      "title": "单元格全角空格",
+      "desc": "单元格内包含全角空格（U+3000）等异常空白",
+      "suggestion": "替换全角空格为半角空格或直接删除"
+    },
+    "duplicate_header": {
+      "enabled": true,
+      "severity": "medium",
+      "title": "表头重复字段",
+      "desc": "首行表头存在重复的字段名称",
+      "suggestion": "重命名重复字段，保证表头唯一"
+    },
+    "hidden_row_col": {
+      "enabled": true,
+      "severity": "low",
+      "title": "隐藏行列",
+      "desc": "存在被隐藏的行或列，可能藏有未清理数据",
+      "suggestion": "确认隐藏内容是否需要保留，必要时取消隐藏并清理"
+    }
+  },
+  "textnorm": {
+    "tn_colloquial": {
+      "enabled": true,
+      "severity": "medium",
+      "title": "疑似口语化/不规范用词",
+      "desc": "出现口语化、非正式书面表达（如 立马、搞定、事儿），正式公文应避免",
+      "suggestion": "本项仅为疑似提示，请人工判断；建议改用规范书面语。词库：dictionaries/colloquial.txt"
+    },
+    "tn_redundant": {
+      "enabled": true,
+      "severity": "medium",
+      "title": "疑似重复冗余词句",
+      "desc": "出现语义重叠的冗余语病（如 亲眼目睹、凯旋归来、涉及到）",
+      "suggestion": "本项仅为疑似提示，请人工判断；建议删去重复成分。词库：dictionaries/redundant.txt"
+    },
+    "tn_confusable": {
+      "enabled": true,
+      "severity": "high",
+      "title": "疑似近义词误用",
+      "desc": "出现易混淆近义词（制定/制订、权利/权力、必须/必需等）",
+      "suggestion": "本项仅为疑似提示，请人工核对用字；词库：dictionaries/confusable.txt"
+    },
+    "tn_ambiguous": {
+      "enabled": true,
+      "severity": "low",
+      "title": "疑似歧义/过长无标点长句",
+      "desc": "出现易产生歧义的模糊词（相关、适当、若干等），或过长且无句末标点的长句",
+      "suggestion": "本项仅为疑似提示，请人工判断；建议明确指代、适当断句。词库：dictionaries/ambiguous.txt",
+      "max_sentence_len": 80
+    },
+    "tn_typo": {
+      "enabled": true,
+      "severity": "high",
+      "title": "疑似错别字",
+      "desc": "出现常见易写错词语（如 安祥→安详、布署→部署）",
+      "suggestion": "本项仅为疑似提示，请人工核对用字。词库：dictionaries/typo.txt"
+    },
+    "tn_en_typo": {
+      "enabled": true,
+      "severity": "high",
+      "title": "疑似英文拼写错误",
+      "desc": "出现常见英文拼写错误（如 recieve→receive、goverment→government），整词匹配避免误伤",
+      "suggestion": "本项仅为疑似提示，请人工核对拼写。词库：dictionaries/en_typo.txt"
+    },
+    "tn_grammar": {
+      "enabled": true,
+      "severity": "high",
+      "title": "疑似语法错误",
+      "desc": "中英文语法问题：句式杂糅（根据…显示/通过…使）、关联词误配（只要…才/不但…反而）、英文主谓不一致、时态/冠词/比较级误用等",
+      "suggestion": "本项仅为疑似提示，请人工结合上下文判断。词库：dictionaries/grammar.txt"
+    },
+    "tn_vocab": {
+      "enabled": true,
+      "severity": "medium",
+      "title": "疑似词汇搭配不当",
+      "desc": "中英文词汇问题：动宾搭配不当（改善…水平/提高…力度）、语义赘余（因为…的原因）、英文不可数名词量词误用（fewer money）等",
+      "suggestion": "本项仅为疑似提示，请人工核对措辞。词库：dictionaries/vocab.txt"
+    },
+    "tn_abbrev": {
+      "enabled": true,
+      "severity": "low",
+      "title": "疑似非正式简称/自创缩写",
+      "desc": "出现非正式简称，或未经定义的英文缩写（如 自创 2~5 位大写字母组合）",
+      "suggestion": "本项仅为疑似提示，请人工判断；建议首次出现写全称。词库：dictionaries/abbrev.txt"
+    },
+    "tn_units": {
+      "enabled": true,
+      "severity": "medium",
+      "title": "疑似数量/单位表述不统一",
+      "desc": "出现非标准单位符号（KM、KG 等），或 万元/元、亿元/万元 混用",
+      "suggestion": "本项仅为疑似提示，请人工统一计量单位。词库：dictionaries/units.txt"
+    },
+    "tn_asset_terms": {
+      "enabled": true,
+      "severity": "medium",
+      "title": "疑似资产评估术语表述不规范",
+      "desc": "出现《资产评估准则术语2020》术语的误写 / 非规范表述（如 现金流折现法→现金流量折现法、评估基准日期→评估基准日、委托方→委托人）",
+      "suggestion": "本项仅为疑似提示，请人工对照《资产评估准则术语2020》核实并统一术语表述。词库：dictionaries/asset_terms.txt"
+    }
+  },
+  "fluency": {
+    "fl_logic": {
+      "enabled": true,
+      "severity": "medium",
+      "title": "单句逻辑断裂",
+      "desc": "关联从句悬空独立成句、重复归因等逻辑断裂问题（如「因为时间紧迫。」缺结果主句）",
+      "suggestion": "语句不通顺，请强制复核：补全主句或理顺因果关系。模式词库：dictionaries/fluency.txt"
+    },
+    "fl_incomplete": {
+      "enabled": true,
+      "severity": "medium",
+      "title": "句子成分残缺",
+      "desc": "介词短语、状语等孤立成句，缺少主语或谓语中心语（如「通过本次调研。」）",
+      "suggestion": "语句不通顺，请强制复核：补全句子主干成分。模式词库：dictionaries/fluency.txt"
+    },
+    "fl_order": {
+      "enabled": true,
+      "severity": "low",
+      "title": "语序混乱",
+      "desc": "关联词错位、时序颠倒等语序问题（如「而且…不仅」「不是…而且」）",
+      "suggestion": "建议优化：调整语序为规范表述（如「不仅…而且…」）。模式词库：dictionaries/fluency.txt"
+    },
+    "fl_repeat": {
+      "enabled": true,
+      "severity": "low",
+      "title": "重复赘述",
+      "desc": "同一句内重复堆叠目的状语、强调词等赘述成分（如「为了…为了…」）",
+      "suggestion": "建议优化：合并重复成分，精简表述。模式词库：dictionaries/fluency.txt"
+    },
+    "fl_conj": {
+      "enabled": true,
+      "severity": "medium",
+      "title": "关联词搭配错误",
+      "desc": "关联词错配（如「既…而且」「尽管…而且」「无论…就」）",
+      "suggestion": "语句不通顺，请强制复核：更换为正确搭配（既…又、尽管…但、无论…都）。模式词库：dictionaries/fluency.txt"
+    },
+    "fl_mixed": {
+      "enabled": true,
+      "severity": "high",
+      "title": "句式杂糅",
+      "desc": "叠床架屋式重复表意（如「原因是由于」「是因为…的原因」「由于…所致」）",
+      "suggestion": "语句不通顺，请强制复核：删去重复成分，保留一种句式。模式词库：dictionaries/fluency.txt"
+    }
+  }
+}
