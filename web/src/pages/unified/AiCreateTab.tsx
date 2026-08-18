@@ -28,7 +28,7 @@ const genId = (p: string) => p + Math.random().toString(16).slice(2, 10);
 const SUB_TABS = [
   { key: "dialogue", name: "对话式创建", icon: "💬" },
   { key: "text", name: "文本式创建", icon: "📝" },
-  { key: "learning", name: "自学习记忆", icon: "🧠" },
+  { key: "learning", name: "本地AI自学习", icon: "🧠" },
 ] as const;
 
 function download(blob: Blob, fname: string) {

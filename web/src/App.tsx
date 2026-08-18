@@ -15,7 +15,7 @@ import { applyTheme } from "./lib/theme";
 function parseHash(hash: string): { view: string; detTab: string; uniTab: string } {
   let v = (hash || "#overview").replace(/^#\/?/, "");
   let detTab = "upload";
-  let uniTab = "customRules";
+  let uniTab = "rules";
 
   // 检测管理旧路由：upload/files/issues/report
   if (v === "upload" || v === "files" || v === "issues" || v === "report") {
@@ -32,8 +32,14 @@ function parseHash(hash: string): { view: string; detTab: string; uniTab: string
     if (DET_TABS.some((t) => t.key === sub)) detTab = sub;
     v = "detection";
   }
-  // 统一管理旧路由：customRules/wordbanks/template
-  if (v === "customRules" || v === "wordbanks" || v === "template") {
+  // 统一管理旧路由：customRules→rules、wordbanks、builtinRules→rules、builtinDicts→wordbanks、template
+  if (v === "customRules" || v === "builtinRules") {
+    uniTab = "rules";
+    v = "unified";
+  } else if (v === "wordbanks" || v === "builtinDicts") {
+    uniTab = "wordbanks";
+    v = "unified";
+  } else if (v === "template") {
     uniTab = v;
     v = "unified";
   }

@@ -452,6 +452,7 @@ export interface ScanStats {
   duplicate_cleanable: number;
   normal: number;
   cleanable: number;
+  readonly: number;
   sources: number;
   by_source: Record<string, ScanSourceStats>;
 }

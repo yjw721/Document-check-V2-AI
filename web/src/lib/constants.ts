@@ -19,11 +19,9 @@ export const DET_TABS = [
 ] as const;
 
 export const UNI_TABS = [
-  { key: "customRules", name: "自定义正则规则", ic: "🧩" },
-  { key: "wordbanks", name: "自定义词库", ic: "📚" },
-  { key: "template", name: "词库与标准规则批量导入", ic: "📥" },
-  { key: "builtinRules", name: "内置标准规则", ic: "⚙️" },
-  { key: "builtinDicts", name: "内置词库", ic: "📖" },
+  { key: "rules", name: "规则总览", ic: "🧩" },
+  { key: "wordbanks", name: "词库总览", ic: "📚" },
+  { key: "template", name: "词库标准规则批量导入", ic: "📥" },
   { key: "aiCreate", name: "AI 规则词库智能生成", ic: "🤖" },
   { key: "scan", name: "一键扫描清理", ic: "🧹" },
 ] as const;

@@ -261,7 +261,7 @@ export default function AdminPage() {
           <SectionTitle className="!mb-0">检测全局限制</SectionTitle>
           <HoloBadge tone="gray">config/rules.json · global</HoloBadge>
           <span className="ml-auto flex gap-2.5">
-            <HoloButton size="sm" onClick={() => (window.location.hash = "#unified/builtinRules")}>
+            <HoloButton size="sm" onClick={() => (window.location.hash = "#unified/rules")}>
               前往规则与词库统一管理 →
             </HoloButton>
             <HoloButton variant="primary" size="sm" disabled={saving === "rules"} onClick={saveRules}>

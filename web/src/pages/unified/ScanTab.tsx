@@ -9,8 +9,9 @@ import { useToast } from "../../components/ui/Toast";
 import { emitRulesChanged } from "../../lib/events";
 import type { ScanItem, ScanResult } from "../../lib/types";
 
-/* 标签7 · 一键扫描清理：扫描全部来源规则词库，分类识别无效/重复/正常条目，
-   勾选删除 + 一键清理无效 + 一键处理重复 + 二次确认 + 备份导出 + 进度提示 */
+/* 标签5 · 一键扫描清理：扫描全部来源规则词库，分类识别无效/重复/正常条目，
+   勾选删除 + 一键清理无效 + 一键处理重复 + 二次确认 + 备份导出 + 进度提示。
+   内置标准规则 / 词库（dictionary 来源）只读，禁止删除，仅作诊断提示。 */
 export default function ScanTab() {
   const toast = useToast();
   const [result, setResult] = useState<ScanResult | null>(null);
@@ -44,9 +45,10 @@ export default function ScanTab() {
   const normalItems = useMemo(() => items.filter((i) => i.category === "normal"), [items]);
   const stats = result?.stats;
 
-  /* ---------- 勾选 ---------- */
+  /* ---------- 勾选（内置只读条目不可勾选） ---------- */
+  const readonlyItem = (it: ScanItem) => it.source === "dictionary";
   const toggle = (it: ScanItem) => {
-    if (it.keep) return;
+    if (it.keep || readonlyItem(it)) return;
     setChecked((s) => {
       const n = new Set(s);
       if (n.has(it.item_id)) n.delete(it.item_id);
@@ -59,16 +61,18 @@ export default function ScanTab() {
     setChecked((s) => {
       const n = new Set(s);
       for (const it of list) {
-        if (it.keep) continue;
+        if (it.keep || readonlyItem(it)) continue;
         if (on) n.add(it.item_id);
         else n.delete(it.item_id);
       }
       return n;
     });
 
-  const selectable = (list: ScanItem[]) => list.filter((i) => !i.keep);
+  const selectable = (list: ScanItem[]) => list.filter((i) => !i.keep && !readonlyItem(i));
   const groupAllOn = (list: ScanItem[]) =>
-    list.filter((i) => !i.keep).length > 0 && selectable(list).every((i) => checked.has(i.item_id));
+    list.filter((i) => !i.keep && !readonlyItem(i)).length > 0 &&
+    selectable(list).every((i) => checked.has(i.item_id));
+  const cleanableIn = (list: ScanItem[]) => list.filter((i) => !i.keep && !readonlyItem(i));
 
   /* ---------- 扫描（进度轮询） ---------- */
   const startScan = async () => {
@@ -177,8 +181,7 @@ export default function ScanTab() {
 
   /* ---------- 定位原条目：跳转到对应管理页 ---------- */
   const jumpTo = (it: ScanItem) => {
-    const tab =
-      it.source === "custom_rules" ? "customRules" : it.source === "wordbanks" ? "wordbanks" : "builtinDicts";
+    const tab = it.source === "custom_rules" ? "rules" : "wordbanks";
     window.location.hash = `#unified/${tab}`;
   };
 
@@ -205,7 +208,7 @@ export default function ScanTab() {
           <div className="mr-auto">
             <div className="text-sm font-bold">一键扫描管理</div>
             <div className="mt-0.5 text-xs text-white/50">
-              扫描全部来源的规则与词库，自动识别无效 / 重复 / 正常条目；清理前自动备份，正常条目与 AI 学习样本不受影响
+              扫描全部来源的规则与词库，自动识别无效 / 重复 / 正常条目；清理前自动备份，正常条目与 AI 学习样本不受影响；内置标准规则 / 词库只读，仅诊断提示、禁止删除
             </div>
           </div>
           <HoloButton
@@ -249,7 +252,8 @@ export default function ScanTab() {
               { label: "共扫描条目", val: stats.scanned, cls: "" },
               { label: "无效条目", val: stats.invalid, cls: "text-[var(--tone-danger)]" },
               { label: "重复条目", val: stats.duplicate, cls: "text-[var(--tone-warn)]" },
-              { label: "待清理", val: stats.cleanable, cls: "text-[var(--tone-cyan)]" },
+              { label: "待清理（自定义）", val: stats.cleanable, cls: "text-[var(--tone-cyan)]" },
+              { label: "内置只读诊断", val: stats.readonly ?? 0, cls: "text-[var(--tone-gray)]" },
               { label: "正常条目", val: stats.normal, cls: "text-[var(--tone-ok)]" },
             ].map((s) => (
               <div key={s.label} className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2.5">
@@ -289,17 +293,17 @@ export default function ScanTab() {
               <span className={`text-sm font-bold ${headCls.invalid}`}>⛔ 无效条目</span>
               <HoloBadge tone="danger">{invalidItems.length} 条</HoloBadge>
               <span className="text-[11px] text-white/40">
-                匹配=建议 / 空内容 / 正则语法错误 / 格式错误等，清理不破坏正常规则
+                匹配=建议 / 空内容 / 正则语法错误 / 格式错误等；内置条目只读仅提示，不可清理
               </span>
               <div className="ml-auto flex flex-wrap items-center gap-2">
-                <HoloButton size="sm" onClick={() => setGroup(invalidItems, !groupAllOn(invalidItems))}>
+                <HoloButton size="sm" onClick={() => setGroup(cleanableIn(invalidItems), !groupAllOn(invalidItems))}>
                   {groupAllOn(invalidItems) ? "取消全选" : "全选无效"}
                 </HoloButton>
                 <HoloButton
                   size="sm"
                   variant="danger"
-                  onClick={() => openClean(invalidItems.map((i) => i.item_id), "全部无效项")}
-                  disabled={!invalidItems.length}
+                  onClick={() => openClean(cleanableIn(invalidItems).map((i) => i.item_id), "全部无效项")}
+                  disabled={!cleanableIn(invalidItems).length}
                 >
                   一键清理全部无效项
                 </HoloButton>
@@ -327,11 +331,16 @@ export default function ScanTab() {
                             className="accent-[var(--accent)]"
                             checked={checked.has(it.item_id)}
                             onChange={() => toggle(it)}
+                            disabled={readonlyItem(it)}
+                            title={readonlyItem(it) ? "内置内容只读，禁止删除" : undefined}
                           />
                         </td>
                         <td className="px-3 py-1.5">
                           <div className="flex items-center gap-1.5">
                             <HoloBadge tone={srcTone(it.source)}>{it.source_label}</HoloBadge>
+                            {readonlyItem(it) && (
+                              <HoloBadge tone="gray">内置只读</HoloBadge>
+                            )}
                             <button
                               onClick={() => jumpTo(it)}
                               title="跳转到对应管理页定位该条目"
@@ -362,7 +371,7 @@ export default function ScanTab() {
               <span className={`text-sm font-bold ${headCls.duplicate}`}>🔁 重复条目</span>
               <HoloBadge tone="warn">{dupItems.length} 条</HoloBadge>
               <span className="text-[11px] text-white/40">
-                重复项保留首次出现，其余可一键清理（勾选默认不含保留项）
+                重复项保留首次出现，其余可一键清理（勾选默认不含保留项）；内置条目只读仅提示
               </span>
               <div className="ml-auto flex flex-wrap items-center gap-2">
                 <HoloButton
@@ -375,8 +384,8 @@ export default function ScanTab() {
                 <HoloButton
                   size="sm"
                   variant="danger"
-                  onClick={() => openClean(dupCleanable.map((i) => i.item_id), "重复项（保留首次出现）")}
-                  disabled={!dupCleanable.length}
+                  onClick={() => openClean(cleanableIn(dupCleanable).map((i) => i.item_id), "重复项（保留首次出现）")}
+                  disabled={!cleanableIn(dupCleanable).length}
                 >
                   一键处理重复项
                 </HoloButton>
@@ -404,13 +413,16 @@ export default function ScanTab() {
                             className="accent-[var(--accent)]"
                             checked={checked.has(it.item_id)}
                             onChange={() => toggle(it)}
-                            disabled={it.keep}
-                            title={it.keep ? "保留首次出现项，不可删除" : undefined}
+                            disabled={it.keep || readonlyItem(it)}
+                            title={it.keep ? "保留首次出现项，不可删除" : readonlyItem(it) ? "内置内容只读，禁止删除" : undefined}
                           />
                         </td>
                         <td className="px-3 py-1.5">
                           <div className="flex items-center gap-1.5">
                             <HoloBadge tone={srcTone(it.source)}>{it.source_label}</HoloBadge>
+                            {readonlyItem(it) && (
+                              <HoloBadge tone="gray">内置只读</HoloBadge>
+                            )}
                             <button
                               onClick={() => jumpTo(it)}
                               title="跳转到对应管理页定位该条目"

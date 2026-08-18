@@ -35,7 +35,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from checkers.custom_rules import load_custom_rules, save_custom_rules
 from checkers.wordbank import load_wordbanks, save_wordbanks
 from checkers.ai_memory import load_learned, save_learned
-from checkers.dictionary_manager import DICT_META, read_dictionary, save_dictionary
+from checkers.dictionary_manager import DICT_META, read_dictionary
 from checkers.rule_filter import NOISE_SINGLE_CHARS
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -353,24 +353,35 @@ def scan_all(progress: Optional[Callable[[float, str, str], bool]] = None) -> Di
             "duplicate": sum(1 for it in its if it["category"] == "duplicate"),
             "normal": sum(1 for it in its if it["category"] == "normal"),
         }
+    # 待清理 = 仅自定义来源（内置标准规则/词库只读，禁止删除）
+    cleanable = len(cleanable_ids(items=items))
+    readonly = len([it for it in items if it["source"] == "dictionary"
+                    and (it["category"] == "invalid" or (it["category"] == "duplicate" and not it["keep"]))])
     return {
         "time": time.strftime("%Y-%m-%d %H:%M:%S"),
         "stats": {
             "scanned": len(items), "invalid": invalid,
             "duplicate": len(dups), "duplicate_cleanable": dup_cleanable,
-            "normal": normal, "cleanable": invalid + dup_cleanable,
+            "normal": normal, "cleanable": cleanable, "readonly": readonly,
             "sources": SCAN_SOURCES, "by_source": by_source,
         },
         "items": items,
     }
 
 
-def cleanable_ids(result: Optional[Dict[str, Any]] = None) -> List[str]:
-    """全部待清理条目 id（无效 + 重复非保留项）。"""
-    result = result if result is not None else scan_all()
-    return [it["item_id"] for it in result["items"]
-            if it["category"] == "invalid"
-            or (it["category"] == "duplicate" and not it["keep"])]
+def cleanable_ids(result: Optional[Dict[str, Any]] = None,
+                  items: Optional[List[Dict[str, Any]]] = None) -> List[str]:
+    """全部待清理条目 id（无效 + 重复非保留项）。
+
+    内置标准规则 / 词库（dictionary 来源）只读，禁止删除，不列入待清理。
+    """
+    if items is None:
+        result = result if result is not None else scan_all()
+        items = result.get("items", [])
+    return [it["item_id"] for it in items
+            if it["source"] != "dictionary"
+            and (it["category"] == "invalid"
+                 or (it["category"] == "duplicate" and not it["keep"]))]
 
 
 # ---------------------------------------------------------------------------
@@ -395,17 +406,18 @@ def _sync_learned(removed_wb: set, removed_cr: set) -> None:
 
 
 def _delete_items(items: List[Dict[str, Any]]) -> int:
-    """按 item 定位信息执行删除，返回删除条数。"""
+    """按 item 定位信息执行删除，返回删除条数。
+
+    仅处理自定义来源（custom_rules / wordbanks）；内置词库条目由
+    clean_items 提前拦截，此处不再处理。
+    """
     cr: Dict[str, set] = {}
     wb: Dict[str, set] = {}
-    dl: Dict[str, set] = {}
     for it in items:
         if it["source"] == "custom_rules":
             cr.setdefault(it["group_id"], set()).add(it["entity_id"])
         elif it["source"] == "wordbanks":
             wb.setdefault(it["group_id"], set()).add(it["entity_id"])
-        else:
-            dl.setdefault(it["group_id"], set()).add(it["line_no"])
 
     removed = 0
     removed_cr_ids: set = set()
@@ -438,14 +450,6 @@ def _delete_items(items: List[Dict[str, Any]]) -> int:
                           if g.get("id") != "ai_learning_wb" or g.get("entries")]
         save_wordbanks(data)
 
-    for fname, line_nos in dl.items():
-        content = read_dictionary(fname)
-        if content is None:
-            continue
-        kept = [raw for ln, raw in enumerate(content.split("\n")) if ln not in line_nos]
-        removed += len(line_nos)
-        save_dictionary(fname, "\n".join(kept))
-
     _sync_learned(removed_wb_ids, removed_cr_ids)
     return removed
 
@@ -453,27 +457,36 @@ def _delete_items(items: List[Dict[str, Any]]) -> int:
 def clean_items(item_ids: List[str], write_backup: bool = True) -> Tuple[bool, str, Dict[str, Any]]:
     """按 item_id 清理无效 / 重复（非保留）条目。
 
-    安全红线：normal 与重复保留项拒绝清理；样本记忆不触碰；
-    词库文件仅删除命中行，注释与其它词条原样保留。
+    安全红线：
+        - normal 与重复保留项拒绝清理
+        - 内置标准规则 / 词库（dictionary 来源）只读，禁止删除，一律拒绝
+        - 样本记忆不触碰；词库文件仅删除命中行，注释与其它词条原样保留
     返回 (是否成功, 说明, 统计信息)。
     """
     result = scan_all()
     index = {it["item_id"]: it for it in result["items"]}
     to_delete: List[Dict[str, Any]] = []
+    skipped_builtin = 0
     for iid in item_ids or []:
         it = index.get(iid)
         if not it:
             continue
+        if it["source"] == "dictionary":
+            skipped_builtin += 1  # 内置内容只读，禁止删除
+            continue
         if it["category"] == "invalid" or (it["category"] == "duplicate" and not it["keep"]):
             to_delete.append(it)
+    if skipped_builtin and not to_delete:
+        return False, "内置标准规则 / 词库为只读内容，禁止删除（请勿勾选内置来源条目）", {"removed": 0}
     if not to_delete:
-        return False, "没有可清理的条目（仅允许清理无效项与重复项）", {"removed": 0}
+        return False, "没有可清理的条目（仅允许清理自定义来源的无效项与重复项）", {"removed": 0}
 
     removed = _delete_items(to_delete)
     backup_file = ""
     if write_backup:
         backup_file = _write_backup(to_delete, removed)
-    return (True, f"已清理 {removed} 条条目（自动备份：{backup_file or '已跳过'}）",
+    note = "（另跳过内置只读条目 " + str(skipped_builtin) + " 条）" if skipped_builtin else ""
+    return (True, f"已清理 {removed} 条条目{note}（自动备份：{backup_file or '已跳过'}）",
             {"removed": removed, "backup_file": backup_file, "stats": result["stats"]})
 
 

@@ -2,14 +2,15 @@ import { useEffect, useState } from "react";
 import HoloCard from "../../components/ui/HoloCard";
 import HoloButton from "../../components/ui/HoloButton";
 import HoloSwitch from "../../components/ui/HoloSwitch";
-import { HoloInput, HoloSelect } from "../../components/ui/HoloInput";
-import EmptyState from "../../components/common/EmptyState";
+import { HoloSelect } from "../../components/ui/HoloInput";
+import SectionTitle from "../../components/common/SectionTitle";
 import { api } from "../../lib/api";
-import type { RuleDef, RulesData, SettingsData, Severity } from "../../lib/types";
+import type { RuleDef, RulesData, SettingsData } from "../../lib/types";
 import { useToast } from "../../components/ui/Toast";
+import { onRulesChanged } from "../../lib/events";
+import CustomRulesTab from "./CustomRulesTab";
 
-/* 标签4 · 内置标准规则：word / excel / textnorm / fluency 全部分区，
-   启停开关 + 严重级别 + 整改建议 编辑，保存写入 config/rules.json（纯本地） */
+/* 规则总览：自定义规则（完整增删改）+ 内置标准规则（只读，仅可启停开关 / 恢复默认） */
 const SECTIONS: [string, string][] = [
   ["word", "Word 文档"],
   ["excel", "Excel 表格"],
@@ -17,13 +18,7 @@ const SECTIONS: [string, string][] = [
   ["fluency", "语句通顺检测"],
 ];
 
-const SEV_OPTS: [Severity, string][] = [
-  ["high", "严重"],
-  ["medium", "一般"],
-  ["low", "轻微"],
-];
-
-export default function BuiltinRulesTab() {
+function BuiltinRulesSection() {
   const toast = useToast();
   const [rules, setRules] = useState<RulesData | null>(null);
   const [settings, setSettings] = useState<SettingsData | null>(null);
@@ -36,20 +31,14 @@ export default function BuiltinRulesTab() {
   };
   useEffect(() => {
     load();
+    return onRulesChanged(load);
   }, []);
 
   if (!rules) return null;
 
-  const setAt = (sec: string, key: string, field: string, v: unknown) => {
+  const setAt = (sec: string, key: string, v: boolean) => {
     const secObj = (rules[sec] ?? {}) as Record<string, RuleDef>;
-    setRules((r) =>
-      r
-        ? {
-            ...r,
-            [sec]: { ...secObj, [key]: { ...secObj[key], [field]: v } },
-          }
-        : r,
-    );
+    setRules((r) => (r ? { ...r, [sec]: { ...secObj, [key]: { ...secObj[key], enabled: v } } } : r));
   };
 
   const toggleFold = (sec: string) =>
@@ -65,7 +54,7 @@ export default function BuiltinRulesTab() {
     try {
       await api.saveRules(rules);
       if (settings) await api.saveSettings(settings);
-      toast("内置标准规则已保存到 config/rules.json，下次检测生效");
+      toast("内置标准规则开关已保存到 config/rules.json，下次检测生效");
     } catch (e) {
       toast((e as Error).message, "err");
     } finally {
@@ -83,6 +72,13 @@ export default function BuiltinRulesTab() {
     }
   };
 
+  const setAllInSec = (sec: string, v: boolean) => {
+    const secObj = (rules[sec] ?? {}) as Record<string, RuleDef>;
+    const nf: Record<string, RuleDef> = {};
+    for (const [k, d] of Object.entries(secObj)) nf[k] = { ...d, enabled: v };
+    setRules((r) => (r ? { ...r, [sec]: nf } : r));
+  };
+
   const sens = (settings?.detection?.fluency_sensitivity as string) || "normal";
   const setSens = (v: string) =>
     setSettings((d) => (d ? { ...d, detection: { ...(d.detection ?? {}), fluency_sensitivity: v } } : d));
@@ -91,9 +87,12 @@ export default function BuiltinRulesTab() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2.5">
         <HoloButton size="sm" variant="primary" disabled={saving} onClick={save}>
-          {saving ? "保存中…" : "保存规则"}
+          {saving ? "保存中…" : "保存内置规则开关"}
         </HoloButton>
         <HoloButton size="sm" onClick={restore}>恢复默认</HoloButton>
+        <span className="ml-auto text-xs text-white/40">
+          内置标准规则为只读内容，仅可启停开关，不可修改或删除
+        </span>
       </div>
 
       {SECTIONS.map(([sec, label]) => {
@@ -103,7 +102,6 @@ export default function BuiltinRulesTab() {
         const enabledCount = entries.filter(([, d]) => d.enabled !== false).length;
         return (
           <HoloCard key={sec} className="overflow-hidden p-0" glow="sm">
-            {/* 分区头 */}
             <div className="flex flex-wrap items-center gap-2.5 px-4 py-3">
               <button
                 onClick={() => toggleFold(sec)}
@@ -127,25 +125,12 @@ export default function BuiltinRulesTab() {
                     <option value="normal">灵敏度：常用（默认）</option>
                     <option value="strict">灵敏度：严格</option>
                   </HoloSelect>
-                  <HoloButton size="sm" onClick={() => {
-                    const nf: Record<string, RuleDef> = {};
-                    for (const [k, d] of Object.entries(secObj)) nf[k] = { ...d, enabled: true };
-                    setRules((r) => (r ? { ...r, fluency: nf } : r));
-                  }}>
-                    启用全部
-                  </HoloButton>
-                  <HoloButton size="sm" onClick={() => {
-                    const nf: Record<string, RuleDef> = {};
-                    for (const [k, d] of Object.entries(secObj)) nf[k] = { ...d, enabled: false };
-                    setRules((r) => (r ? { ...r, fluency: nf } : r));
-                  }}>
-                    停用全部
-                  </HoloButton>
+                  <HoloButton size="sm" onClick={() => setAllInSec(sec, true)}>启用全部</HoloButton>
+                  <HoloButton size="sm" onClick={() => setAllInSec(sec, false)}>停用全部</HoloButton>
                 </div>
               )}
             </div>
 
-            {/* 规则列表 */}
             {!isFolded &&
               (entries.length ? (
                 <div className="border-t border-white/10">
@@ -153,7 +138,7 @@ export default function BuiltinRulesTab() {
                     <div key={key} className="flex flex-wrap items-center gap-3 border-b border-white/5 px-4 py-2.5 last:border-0">
                       <HoloSwitch
                         checked={def.enabled !== false}
-                        onChange={(v) => setAt(sec, key, "enabled", v)}
+                        onChange={(v) => setAt(sec, key, v)}
                       />
                       <div className="min-w-0 flex-1">
                         <div className="text-[13px] text-white/85">{def.title ?? key}</div>
@@ -161,34 +146,35 @@ export default function BuiltinRulesTab() {
                           {String(def.desc ?? "") || "—"}
                         </div>
                       </div>
-                      <HoloSelect
-                        className="w-[104px] py-1"
-                        value={def.severity ?? "medium"}
-                        onChange={(e) => setAt(sec, key, "severity", e.target.value)}
-                      >
-                        {SEV_OPTS.map(([v, n]) => (
-                          <option key={v} value={v}>
-                            {n}
-                          </option>
-                        ))}
-                      </HoloSelect>
-                      <HoloInput
-                        className="w-[260px] py-1"
-                        placeholder="整改建议"
-                        value={def.suggestion ?? ""}
-                        onChange={(e) => setAt(sec, key, "suggestion", e.target.value)}
-                      />
+                      <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[11px] text-white/50">
+                        {def.severity === "high" ? "严重" : def.severity === "low" ? "轻微" : "一般"}
+                      </span>
                     </div>
                   ))}
                 </div>
               ) : (
                 <div className="border-t border-white/10">
-                  <EmptyState text="该分区暂无规则" icon="✨" />
+                  <div className="px-4 py-4 text-center text-xs text-white/40">该分区暂无规则</div>
                 </div>
               ))}
           </HoloCard>
         );
       })}
+    </div>
+  );
+}
+
+export default function RulesOverviewTab() {
+  return (
+    <div className="space-y-6">
+      <section className="space-y-3">
+        <SectionTitle className="!mb-0">自定义规则 · 可增删改查</SectionTitle>
+        <CustomRulesTab />
+      </section>
+      <section className="space-y-3">
+        <SectionTitle className="!mb-0">内置标准规则 · 只读仅可开关</SectionTitle>
+        <BuiltinRulesSection />
+      </section>
     </div>
   );
 }
