@@ -460,6 +460,8 @@
    - 各层级变量在暗底 / 浅底均 ≥4.5:1
    （选择器特异性高于 @layer utilities，无需 !important）
    ============================================================ */
+.text-white\/20,
+.text-white\/25,
 .text-white\/30,
 .text-white\/35,
 .text-white\/40 {
