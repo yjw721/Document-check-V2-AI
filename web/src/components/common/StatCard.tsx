@@ -12,9 +12,9 @@ interface StatCardProps {
 
 const TONES = {
   default: "text-white",
-  danger: "text-[#ff6b7d]",
-  ok: "text-[#46d39a]",
-  warn: "text-[#ffb454]",
+  danger: "text-[var(--tone-danger)]",
+  ok: "text-[var(--tone-ok)]",
+  warn: "text-[var(--tone-warn)]",
 };
 
 export default function StatCard({ label, value, icon, tone = "default", sub }: StatCardProps) {

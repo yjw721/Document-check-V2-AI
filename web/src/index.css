@@ -21,11 +21,11 @@
   --border: rgba(255, 255, 255, 0.1);
   --border-soft: rgba(255, 255, 255, 0.05);
   --border-strong: rgba(255, 255, 255, 0.2);
-  /* 文本 */
+  /* 文本（暗底上全部 ≥4.5:1） */
   --text: #ffffff;
   --text-sub: rgba(255, 255, 255, 0.85);
-  --text-dim: rgba(255, 255, 255, 0.6);
-  --text-faint: rgba(255, 255, 255, 0.4);
+  --text-dim: rgba(255, 255, 255, 0.7);
+  --text-faint: rgba(255, 255, 255, 0.56);
   /* 特殊面 */
   --header-bg: rgba(10, 10, 31, 0.6);
   --thead-bg: rgba(26, 11, 46, 0.82);
@@ -48,8 +48,8 @@
   --row-h2: rgba(121, 40, 202, 0.12);
   --row-h3: rgba(0, 212, 255, 0.09);
   --row-glow: rgba(147, 51, 234, 0.18);
-  /* 渐变文字（浅色下加深保证对比） */
-  --holo-text-grad: #ff0080, #7928ca, #00d4ff, #ff0080;
+  /* 渐变文字（各停点与插值中点均 ≥4.5:1） */
+  --holo-text-grad: #ff3d9e, #b04cf0, #00d4ff, #ff3d9e;
   /* 品牌三色渐变（按钮 / 进度条 / 激活态） */
   --holo-c1: #ff0080;
   --holo-c2: #7928ca;
@@ -67,6 +67,18 @@
   --glow-accent-soft: rgba(var(--accent-rgb), 0.12);
   --border-accent: rgb(var(--accent-rgb));
   --border-accent-soft: rgba(var(--accent-rgb), 0.35);
+  /* ===== 语义色（双主题均 ≥4.5:1） ===== */
+  --tone-ok: #46d39a;
+  --tone-warn: #ffb454;
+  --tone-danger: #ff6b7d;
+  --tone-cyan: #4fd6c9;
+  --tone-danger-soft: #ffb3bd;
+  --tone-violet: #a78bfa;
+  --accent-ink: var(--accent);
+  /* 激活态渐变底（导航 / 标签页 / 筛选 chip） */
+  --tint-c1: rgba(255, 0, 128, 0.25);
+  --tint-c2: rgba(121, 40, 202, 0.3);
+  --tint-c3: rgba(0, 212, 255, 0.25);
 }
 
 /* 深色主题（备选配色方案）：保留宇宙基底 #0a0a1f/#1a0b2e，
@@ -108,11 +120,11 @@
   --border: rgba(124, 96, 200, 0.22);
   --border-soft: rgba(124, 96, 200, 0.14);
   --border-strong: rgba(124, 96, 200, 0.36);
-  /* 文本：深紫罗兰 */
+  /* 文本：深紫罗兰（浅底上全部 ≥4.5:1） */
   --text: #241742;
   --text-sub: rgba(30, 18, 60, 0.9);
-  --text-dim: rgba(52, 34, 100, 0.68);
-  --text-faint: rgba(52, 34, 100, 0.5);
+  --text-dim: rgba(46, 30, 88, 0.78);
+  --text-faint: rgba(46, 30, 88, 0.72);
   /* 特殊面 */
   --header-bg: rgba(255, 255, 255, 0.72);
   --thead-bg: rgba(255, 255, 255, 0.88);
@@ -136,7 +148,26 @@
   --row-h3: rgba(0, 212, 255, 0.08);
   --row-glow: rgba(var(--accent-rgb), 0.12);
   /* 渐变文字加深，保证浅底可读 */
-  --holo-text-grad: #d6006e, #5b21b6, #0096c8, #d6006e;
+  --holo-text-grad: #d6006e, #5b21b6, #00668c, #d6006e;
+  /* 语义色（浅底加深保证对比） */
+  --tone-ok: #0e7a4f;
+  --tone-warn: #945a00;
+  --tone-danger: #cf1f4a;
+  --tone-cyan: #0a7a74;
+  --tone-danger-soft: #8f1038;
+  --tone-violet: #6b3fe0;
+  --accent-ink: #00709c;
+  /* 激活态渐变底（浅色下变深保证深字可读） */
+  --tint-c1: rgba(214, 0, 110, 0.16);
+  --tint-c2: rgba(91, 33, 182, 0.2);
+  --tint-c3: rgba(0, 102, 140, 0.16);
+}
+
+/* 浅色下强调色文字按强调色深浅混合出可读色（不破坏全息设计） */
+@supports (color: color-mix(in srgb, red 50%, blue)) {
+  [data-theme="light"] {
+    --accent-ink: color-mix(in srgb, var(--accent) 45%, #241742);
+  }
 }
 
 @layer base {
@@ -225,6 +256,51 @@
   animation: holoFlow 8s ease infinite;
 }
 
+/* 流光动画（holo-bg / holo-text / 主按钮共用） */
+@keyframes holoFlow {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+/* ---------- 全息渐变主按钮：底层遮罩压暗渐变，保证白字 ≥4.5:1 ---------- */
+.holo-btn-primary {
+  position: relative;
+  isolation: isolate;
+  background-image: linear-gradient(90deg, var(--holo-c1), var(--holo-c2), var(--holo-c3));
+  background-size: 200% 100%;
+  animation: holoFlow 8s ease infinite;
+}
+.holo-btn-primary::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: rgba(10, 10, 31, 0.55);
+  transition: background 0.5s ease;
+}
+.holo-btn-primary:hover::before {
+  background: rgba(10, 10, 31, 0.45);
+}
+.holo-btn-primary:active::before {
+  background: rgba(10, 10, 31, 0.575);
+}
+.holo-btn-primary:disabled::before {
+  background: rgba(10, 10, 31, 0.55);
+}
+
+/* ---------- 激活态渐变底（导航 / 标签页 / 筛选 chip） ---------- */
+.holo-tint {
+  background-image: linear-gradient(90deg, var(--tint-c1), var(--tint-c2), var(--tint-c3));
+}
+
 /* ---------- 玻璃卡片 ---------- */
 .holo-card {
   background: var(--glass);
@@ -301,6 +377,7 @@
   place-items: center;
   background: var(--overlay-bg);
   backdrop-filter: blur(6px);
+  color: #fff;
 }
 .holo-spinner {
   width: 54px;
@@ -378,25 +455,41 @@
 }
 
 /* ============================================================
-   浅色主题：把组件中的 Tailwind 白色 utility 映射为主题变量
+   文本 alpha utility → 语义变量（明暗双主题统一映射）
+   - /30-/40 → faint，/45-/70 → dim，/75-/90 → sub
+   - 各层级变量在暗底 / 浅底均 ≥4.5:1
    （选择器特异性高于 @layer utilities，无需 !important）
    ============================================================ */
-[data-theme="light"] .text-white {
-  color: var(--text);
-}
-[data-theme="light"] .text-white\/30,
-[data-theme="light"] .text-white\/40 {
+.text-white\/30,
+.text-white\/35,
+.text-white\/40 {
   color: var(--text-faint);
 }
-[data-theme="light"] .text-white\/50,
-[data-theme="light"] .text-white\/60,
-[data-theme="light"] .text-white\/70 {
+.text-white\/45,
+.text-white\/50,
+.text-white\/55,
+.text-white\/60,
+.text-white\/65,
+.text-white\/70 {
   color: var(--text-dim);
 }
-[data-theme="light"] .text-white\/80,
-[data-theme="light"] .text-white\/85,
-[data-theme="light"] .text-white\/90 {
+.text-white\/75,
+.text-white\/80,
+.text-white\/85,
+.text-white\/90 {
   color: var(--text-sub);
+}
+.placeholder\:text-white\/40::placeholder {
+  color: var(--text-faint);
+}
+.placeholder\:text-white\/55::placeholder,
+.placeholder\:text-white\/60::placeholder {
+  color: var(--text-dim);
+}
+
+/* 浅色主题：把组件中的 Tailwind 白色 utility 映射为主题变量 */
+[data-theme="light"] .text-white {
+  color: var(--text);
 }
 [data-theme="light"] .bg-white {
   background-color: #ffffff;

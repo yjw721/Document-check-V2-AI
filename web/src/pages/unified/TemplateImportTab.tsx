@@ -178,7 +178,7 @@ export default function TemplateImportTab() {
                     {d.name}
                   </span>
                   <HoloBadge tone={d.ok ? "ok" : "danger"}>{d.ok ? FT_LABEL[d.file_type] || d.file_type : "解析失败"}</HoloBadge>
-                  {!d.ok && d.error && <span className="max-w-[180px] truncate text-xs text-[#ff6b7d]">{d.error}</span>}
+                  {!d.ok && d.error && <span className="max-w-[180px] truncate text-xs text-[var(--tone-danger)]">{d.error}</span>}
                 </div>
               ))}
             </div>
@@ -330,7 +330,7 @@ export default function TemplateImportTab() {
                 {draft!.conflicts.map((c, i) => (
                   <div key={i} className="rounded-2xl border border-[rgba(255,180,84,0.25)] bg-[rgba(255,180,84,0.06)] px-4 py-3">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-sm font-semibold text-[#ffb454]">⚠️ {c.topic}</span>
+                      <span className="text-sm font-semibold text-[var(--tone-warn)]">⚠️ {c.topic}</span>
                       <span className="text-xs text-white/40">{c.docs.join("、")}</span>
                     </div>
                     <ul className="mt-2 space-y-1">
@@ -340,7 +340,7 @@ export default function TemplateImportTab() {
                         </li>
                       ))}
                     </ul>
-                    {c.suggestion && <p className="mt-2 text-[13px] text-[#ffb454]/90">建议：{c.suggestion}</p>}
+                    {c.suggestion && <p className="mt-2 text-[13px] text-[var(--tone-warn)]">建议：{c.suggestion}</p>}
                   </div>
                 ))}
               </div>

@@ -145,7 +145,7 @@ export default function UploadTab() {
           <div className="mt-2">
             拖拽 .docx / .xlsx / .pdf 到此处，或{" "}
             <button
-              className="rounded-xl text-[#a78bfa] underline-offset-2 transition-all duration-500 hover:underline"
+              className="rounded-xl text-[var(--tone-violet)] underline-offset-2 transition-all duration-500 hover:underline"
               onClick={() => dropRef.current?.pick()}
             >
               点击选择

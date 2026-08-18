@@ -10,14 +10,14 @@ interface HoloBadgeProps {
 }
 
 const TONES: Record<Tone, string> = {
-  ok: "bg-[rgba(70,211,154,0.14)] text-[#46d39a] border-[rgba(70,211,154,0.3)]",
-  warn: "bg-[rgba(255,180,84,0.14)] text-[#ffb454] border-[rgba(255,180,84,0.3)]",
-  danger: "bg-[rgba(255,107,125,0.14)] text-[#ff6b7d] border-[rgba(255,107,125,0.3)]",
-  "sev-high": "bg-[rgba(255,107,125,0.16)] text-[#ff6b7d] border-[rgba(255,107,125,0.35)]",
-  "sev-medium": "bg-[rgba(255,180,84,0.16)] text-[#ffb454] border-[rgba(255,180,84,0.35)]",
-  "sev-low": "bg-[rgba(79,214,201,0.16)] text-[#4fd6c9] border-[rgba(79,214,201,0.35)]",
+  ok: "bg-[rgba(70,211,154,0.14)] text-[var(--tone-ok)] border-[rgba(70,211,154,0.3)]",
+  warn: "bg-[rgba(255,180,84,0.14)] text-[var(--tone-warn)] border-[rgba(255,180,84,0.3)]",
+  danger: "bg-[rgba(255,107,125,0.14)] text-[var(--tone-danger)] border-[rgba(255,107,125,0.3)]",
+  "sev-high": "bg-[rgba(255,107,125,0.16)] text-[var(--tone-danger)] border-[rgba(255,107,125,0.35)]",
+  "sev-medium": "bg-[rgba(255,180,84,0.16)] text-[var(--tone-warn)] border-[rgba(255,180,84,0.35)]",
+  "sev-low": "bg-[rgba(79,214,201,0.16)] text-[var(--tone-cyan)] border-[rgba(79,214,201,0.35)]",
   gray: "bg-white/5 text-white/70 border-white/10",
-  accent: "bg-[var(--glow-accent-soft)] text-[var(--accent)] border-[var(--border-accent-soft)]",
+  accent: "bg-[var(--glow-accent-soft)] text-[var(--accent-ink)] border-[var(--border-accent-soft)]",
 };
 
 export default function HoloBadge({ tone = "gray", children, className = "" }: HoloBadgeProps) {

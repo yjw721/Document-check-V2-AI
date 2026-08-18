@@ -56,7 +56,7 @@ export default function ReportTab() {
           <b className="text-white">{overview?.summary.total_issues}</b> 处问题，将一并写入报告。
         </div>
       ) : (
-        <div className="mb-3 text-sm text-[#ffb454]">当前暂无检测结果，请先导入并检测文件。</div>
+        <div className="mb-3 text-sm text-[var(--tone-warn)]">当前暂无检测结果，请先导入并检测文件。</div>
       )}
 
       <div className="space-y-4">

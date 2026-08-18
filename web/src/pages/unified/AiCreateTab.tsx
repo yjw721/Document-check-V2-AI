@@ -621,7 +621,7 @@ function LearningSection(p: LearningProps) {
       <HoloCard className="p-6">
         <SectionTitle>配对人工校对样本（原始文档 + 修订文档）</SectionTitle>
         {!mem.enabled && (
-          <p className="mt-2 text-xs text-[#ffb454]">总开关已关闭，请先开启自学习才能配对学习。</p>
+          <p className="mt-2 text-xs text-[var(--tone-warn)]">总开关已关闭，请先开启自学习才能配对学习。</p>
         )}
         {!pairing ? (
           <div className="mt-3 flex items-start gap-2 rounded-2xl border border-amber-400/20 bg-amber-400/[0.06] px-4 py-3 text-[13px] text-white/80">
@@ -714,7 +714,7 @@ function LearningSection(p: LearningProps) {
                     <span className="text-[11px] text-white/40">来源：{s.source_doc} → {s.revised_doc}</span>
                     <span className="text-[11px] text-white/30">{s.created_at}</span>
                     {s.status === "done" && s.result_count > 0 && (
-                      <span className="text-[11px] text-[#4fd6c9]">产出 {s.result_count} 条</span>
+                      <span className="text-[11px] text-[var(--tone-cyan)]">产出 {s.result_count} 条</span>
                     )}
                   </div>
                   <div className="mt-2 space-y-2">
@@ -728,7 +728,7 @@ function LearningSection(p: LearningProps) {
                   </div>
                   {s.note && <p className="mt-2 text-xs text-white/40">备注：{s.note}</p>}
                   {s.error && (
-                    <p className="mt-2 rounded-xl border border-[rgba(255,107,125,0.3)] bg-[rgba(255,107,125,0.08)] px-3 py-2 text-xs text-[#ffb3bd]">
+                    <p className="mt-2 rounded-xl border border-[rgba(255,107,125,0.3)] bg-[rgba(255,107,125,0.08)] px-3 py-2 text-xs text-[var(--tone-danger-soft)]">
                       学习失败：{s.error}
                     </p>
                   )}

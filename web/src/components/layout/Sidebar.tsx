@@ -42,7 +42,7 @@ export default function Sidebar({ collapsed, onToggle, active, onNavigate }: Sid
                 collapsed ? "justify-center" : ""
               } ${
                 isActive
-                  ? "border-transparent bg-gradient-to-r from-[var(--holo-c1)]/25 via-[var(--holo-c2)]/30 to-[var(--holo-c3)]/25 text-white shadow-[0_0_20px_var(--glow-tab)]"
+                  ? "border-transparent holo-tint text-white shadow-[0_0_20px_var(--glow-tab)]"
                   : "border-transparent text-white/60 hover:bg-white/5 hover:text-white hover:border-white/10"
               }`}
             >

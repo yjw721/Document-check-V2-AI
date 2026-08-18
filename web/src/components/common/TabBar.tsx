@@ -22,7 +22,7 @@ export default function TabBar({ tabs, active, onChange }: TabBarProps) {
           onClick={() => onChange(t.key)}
           className={`flex items-center gap-2 rounded-2xl border px-4 py-2.5 text-sm font-semibold whitespace-nowrap transition-all duration-500 select-none ${
             active === t.key
-              ? "border-transparent bg-gradient-to-r from-[var(--holo-c1)]/20 via-[var(--holo-c2)]/25 to-[var(--holo-c3)]/20 text-white shadow-[0_0_20px_var(--glow-tab)]"
+              ? "border-transparent holo-tint text-white shadow-[0_0_20px_var(--glow-tab)]"
               : "border-transparent text-white/60 hover:bg-white/5 hover:text-white hover:border-white/10"
           }`}
         >

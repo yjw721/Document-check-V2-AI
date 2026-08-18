@@ -130,7 +130,7 @@ export default function WaitingTab() {
         </div>
 
         {(status === "error" || gone) && (
-          <div className="mt-4 rounded-xl border border-[rgba(255,107,125,0.35)] bg-[rgba(255,107,125,0.08)] px-3.5 py-3 text-xs text-[#ffb3bd]">
+          <div className="mt-4 rounded-xl border border-[rgba(255,107,125,0.35)] bg-[rgba(255,107,125,0.08)] px-3.5 py-3 text-xs text-[var(--tone-danger-soft)]">
             {snap?.error || "任务不存在或已过期，请重新发起核验。"}（已完成部分进度保留在进度条中，结果未写入报告）
           </div>
         )}

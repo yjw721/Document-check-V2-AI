@@ -27,7 +27,9 @@ export default function HoloSwitch({ checked, onChange, disabled, label }: HoloS
         />
         <span
           className={`absolute top-[3px] h-[18px] w-[18px] rounded-full bg-white transition-all duration-500 ${
-            checked ? "left-[22px]" : "left-[3px]"
+            checked
+              ? "left-[22px] ring-2 ring-[rgba(10,10,31,0.45)]"
+              : "left-[3px] ring-1 ring-black/20"
           }`}
         />
       </span>

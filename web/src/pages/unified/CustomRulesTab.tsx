@@ -189,7 +189,7 @@ export default function CustomRulesTab() {
                   <button
                     onClick={() => delGroup(gi)}
                     aria-label="删除分组"
-                    className="grid h-7 w-7 place-items-center rounded-xl border border-white/10 bg-white/5 text-xs text-white/60 transition-all duration-500 hover:border-[rgba(255,107,125,0.4)] hover:text-[#ff6b7d] active:scale-95"
+                    className="grid h-7 w-7 place-items-center rounded-xl border border-white/10 bg-white/5 text-xs text-white/60 transition-all duration-500 hover:border-[rgba(255,107,125,0.4)] hover:text-[var(--tone-danger)] active:scale-95"
                   >
                     ✕
                   </button>
@@ -263,7 +263,7 @@ export default function CustomRulesTab() {
                                 <button
                                   onClick={() => delRule(gi, ri)}
                                   aria-label="删除规则"
-                                  className="grid h-6 w-6 place-items-center rounded-lg border border-white/10 bg-white/5 text-xs text-white/60 transition-all duration-500 hover:border-[rgba(255,107,125,0.4)] hover:text-[#ff6b7d] active:scale-95"
+                                  className="grid h-6 w-6 place-items-center rounded-lg border border-white/10 bg-white/5 text-xs text-white/60 transition-all duration-500 hover:border-[rgba(255,107,125,0.4)] hover:text-[var(--tone-danger)] active:scale-95"
                                 >
                                   ✕
                                 </button>

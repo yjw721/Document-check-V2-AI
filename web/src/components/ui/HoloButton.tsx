@@ -17,13 +17,13 @@ const BASE =
 
 const VARIANTS: Record<Variant, string> = {
   primary:
-    "bg-gradient-to-r from-[var(--holo-c1)] via-[var(--holo-c2)] to-[var(--holo-c3)] text-white " +
+    "holo-btn-primary text-[#fff] " +
     "shadow-[0_0_25px_var(--glow-btn)] hover:shadow-[0_0_30px_var(--glow-btn)] hover:border-[var(--border-accent-soft)]",
   ghost:
     "bg-white/10 text-white border border-white/20 backdrop-blur-xl " +
     "hover:bg-white/[0.16] hover:border-[var(--border-accent-soft)] hover:shadow-[0_0_30px_var(--glow-btn)]",
   danger:
-    "bg-[rgba(255,107,125,0.14)] text-[#ffb3bd] border border-[rgba(255,107,125,0.4)] " +
+    "bg-[rgba(255,107,125,0.14)] text-[var(--tone-danger-soft)] border border-[rgba(255,107,125,0.4)] " +
     "hover:bg-[rgba(255,107,125,0.24)] hover:shadow-[0_0_30px_rgba(255,107,125,0.35)]",
 };
 

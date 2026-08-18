@@ -16,7 +16,7 @@ export default function FileChip({ name, sizeText, icon = "📎", onRemove }: Fi
         <button
           onClick={onRemove}
           aria-label={`移除 ${name}`}
-          className="grid h-7 w-7 shrink-0 place-items-center rounded-xl border border-white/10 bg-white/5 text-xs text-white/60 transition-all duration-500 hover:border-[rgba(255,107,125,0.4)] hover:bg-[rgba(255,107,125,0.12)] hover:text-[#ff6b7d] active:scale-95"
+          className="grid h-7 w-7 shrink-0 place-items-center rounded-xl border border-white/10 bg-white/5 text-xs text-white/60 transition-all duration-500 hover:border-[rgba(255,107,125,0.4)] hover:bg-[rgba(255,107,125,0.12)] hover:text-[var(--tone-danger)] active:scale-95"
         >
           ✕
         </button>

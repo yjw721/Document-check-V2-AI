@@ -138,8 +138,8 @@ export default function SettingsPage() {
       {/* 确认弹窗 */}
       <HoloModal open={confirmOpen} title="确认清空检测数据？" onClose={() => setConfirmOpen(false)} width={440}>
         <div className="text-sm leading-relaxed text-white/70">
-          此操作将删除全部 <b className="text-[#ff6b7d]">{s?.total_files ?? 0}</b> 个已导入文件与{" "}
-          <b className="text-[#ff6b7d]">{s?.total_issues ?? 0}</b> 条检测结果，且不可恢复。
+          此操作将删除全部 <b className="text-[var(--tone-danger)]">{s?.total_files ?? 0}</b> 个已导入文件与{" "}
+          <b className="text-[var(--tone-danger)]">{s?.total_issues ?? 0}</b> 条检测结果，且不可恢复。
           <br />
           规则、词库与系统设置不会受影响。确定继续吗？
         </div>
