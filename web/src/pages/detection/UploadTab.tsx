@@ -315,6 +315,20 @@ export default function UploadTab() {
           <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3.5">
             <div className="flex flex-wrap items-center gap-3">
               <HoloSwitch
+                checked={aiDraft.create_enabled ?? true}
+                onChange={(v) => setAiDraft({ ...aiDraft, create_enabled: v })}
+                label="启用本地AI智能生成&自学习（规则词库智能生成统一模块总开关）"
+              />
+            </div>
+            <p className="mt-1.5 text-[11px] leading-relaxed text-white/35">
+              控制「规则与词库 → AI 规则词库智能生成」的对话式/文本式/文档式创建与本地自学习配对学习；
+              关闭后相关入口将被拦截，已有规则词库与学习记忆不受影响。
+            </p>
+          </div>
+
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3.5">
+            <div className="flex flex-wrap items-center gap-3">
+              <HoloSwitch
                 checked={aiDraft.ref_enabled ?? true}
                 onChange={(v) => setAiDraft({ ...aiDraft, ref_enabled: v })}
                 label="核验时携带参考资料"

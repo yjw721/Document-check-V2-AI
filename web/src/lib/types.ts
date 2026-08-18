@@ -196,6 +196,9 @@ export interface TemplateDraft {
 export interface TemplateImportResult {
   imported_rules: number;
   imported_entries: number;
+  filtered_rules?: number;
+  filtered_entries?: number;
+  rejected?: RuleRejected[];
 }
 
 /* ---------- 设置 ---------- */
@@ -250,6 +253,7 @@ export interface AiSettings {
   max_requests?: number;
   ref_enabled?: boolean;
   ref_max_chars?: number;
+  create_enabled?: boolean;
 }
 
 /* ---------- AI 参考资料（标准/词汇/规范） ---------- */
@@ -282,6 +286,28 @@ export interface AiBuildResult {
   rules: AiBuildRule[];
 }
 
+/* 入库前置校验过滤统计（AI 生成 / 范本解析 / 手动保存 通用） */
+export interface RuleRejected {
+  name: string;
+  pattern: string;
+  reason: string;
+}
+export interface RuleFilterStat {
+  generated_rules: number;
+  filtered_rules: number;
+  accepted_rules: number;
+  generated_entries: number;
+  filtered_entries: number;
+  accepted_entries: number;
+  rejected: RuleRejected[];
+}
+export interface AiBuildResp {
+  ok: boolean;
+  message: string;
+  result: AiBuildResult;
+  filter?: RuleFilterStat;
+}
+
 /* ---------- 内置词库 ---------- */
 export interface DictMeta {
   file: string;
@@ -299,13 +325,27 @@ export interface DictionaryContent {
   content: string;
 }
 
-/* ---------- 本地 AI 自学习记忆 ---------- */
+/* ---------- 本地 AI 自学习记忆（成对样本：原始文档 + 人工修订文档） ---------- */
 export type AiMemorySampleStatus = "pending" | "learning" | "done" | "failed";
+
+export interface AiDiff {
+  old: string;
+  new: string;
+}
+
+export interface AiMemorySourceStatus {
+  available: boolean;
+  valid: boolean;
+  files: { name: string; path: string }[];
+  revised: string | null;
+  message: string;
+}
 
 export interface AiMemorySample {
   id: string;
-  content: string;
-  source: string;
+  diffs: AiDiff[];
+  source_doc: string;
+  revised_doc: string;
   note: string;
   status: AiMemorySampleStatus;
   enabled: boolean;
@@ -335,6 +375,7 @@ export interface AiMemoryData {
   enabled: boolean;
   samples: AiMemorySample[];
   learned: AiMemoryLearned[];
+  source_status: AiMemorySourceStatus;
   stats: {
     samples: number;
     pending: number;
@@ -350,11 +391,13 @@ export interface AiMemoryResp {
   message?: string;
   data?: AiMemoryData;
   enabled?: boolean;
+  source_status?: AiMemorySourceStatus;
   stats?: {
     entries?: number;
     rules?: number;
     standard_expression?: string;
     skipped?: number;
+    filtered?: number;
   };
   removed?: number;
 }

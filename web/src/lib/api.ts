@@ -4,7 +4,9 @@
    异源（如内置预览面板）回退到绝对地址直连后端（后端已放行 CORS）。
    ============================================================ */
 import type {
-  AiBuildResult,
+  AiBuildResp,
+  RuleRejected,
+  AiDiff,
   AiMemoryData,
   AiMemoryResp,
   AiRef,
@@ -95,9 +97,11 @@ export const api = {
 
   /* ---------- 自定义规则 / 词库 ---------- */
   customRules: () => request<CustomRulesData>("GET", "/api/custom_rules"),
-  saveCustomRules: (data: CustomRulesData) => request<{ ok: boolean }>("POST", "/api/custom_rules", data),
+  saveCustomRules: (data: CustomRulesData) =>
+    request<{ ok: boolean; filtered_rules?: number; rejected?: RuleRejected[] }>("POST", "/api/custom_rules", data),
   wordbanks: () => request<WordbanksData>("GET", "/api/wordbanks"),
-  saveWordbanks: (data: WordbanksData) => request<{ ok: boolean }>("POST", "/api/wordbanks", data),
+  saveWordbanks: (data: WordbanksData) =>
+    request<{ ok: boolean; filtered_entries?: number; rejected?: RuleRejected[] }>("POST", "/api/wordbanks", data),
   wordbankImport: (body: { text: string }) => request<WordImportResult>("POST", "/api/wordbanks/import", body),
 
   /* ---------- 范本解析（词库与标准规则批量导入） ---------- */
@@ -132,21 +136,34 @@ export const api = {
   aiRefDelete: (name: string) =>
     request<{ ok: boolean; refs: AiRef[] }>("POST", "/api/ai/refs/delete", { name }),
 
-  /* ---------- AI 规则/词库生成 ---------- */
+  /* ---------- AI 规则/词库智能生成（对话式 / 文本式 / 文档式） ---------- */
   aiBuildDialogue: (text: string) =>
-    request<{ ok: boolean; message: string; result: AiBuildResult }>("POST", "/api/ai/build/dialogue", { text }),
+    request<AiBuildResp>("POST", "/api/ai/build/dialogue", { text }),
+  aiBuildText: (text: string) =>
+    request<AiBuildResp>("POST", "/api/ai/build/text", { text }),
   aiBuildDoc: (file: File) => {
     const fd = new FormData();
     fd.append("files", file);
-    return request<{ ok: boolean; message: string; result: AiBuildResult }>("POST", "/api/ai/build/doc", fd);
+    return request<AiBuildResp>("POST", "/api/ai/build/doc", fd);
   },
 
-  /* ---------- 本地 AI 自学习记忆 ---------- */
+  /* ---------- 本地 AI 自学习记忆（成对样本） ---------- */
   aiMemory: () => request<AiMemoryData>("GET", "/api/ai_memory"),
   aiMemoryToggle: (enabled: boolean) =>
     request<{ ok: boolean; enabled: boolean }>("POST", "/api/ai_memory/toggle", { enabled }),
-  aiMemoryAddSample: (body: { content: string; source?: string; note?: string }) =>
-    request<AiMemoryResp>("POST", "/api/ai_memory/samples", body),
+  aiMemoryPair: (file: File) => {
+    const fd = new FormData();
+    fd.append("files", file);
+    return request<AiMemoryResp>("POST", "/api/ai_memory/pair", fd);
+  },
+  aiMemoryDiffs: () => request<{ ok: boolean; message?: string; diffs: AiDiff[] }>("POST", "/api/ai_memory/diffs"),
+  aiMemoryAddSample: (body: {
+    diffs?: AiDiff[];
+    source_doc?: string;
+    revised_doc?: string;
+    note?: string;
+    content?: string;
+  }) => request<AiMemoryResp>("POST", "/api/ai_memory/samples", body),
   aiMemoryLearn: (sid: string) =>
     request<AiMemoryResp>("POST", `/api/ai_memory/samples/${sid}/learn`),
   aiMemorySampleToggle: (sid: string, enabled: boolean) =>
@@ -158,6 +175,8 @@ export const api = {
   aiMemoryLearnedDelete: (lid: string) =>
     request<AiMemoryResp>("DELETE", `/api/ai_memory/learned/${lid}`),
   aiMemoryClear: () => request<AiMemoryResp>("POST", "/api/ai_memory/clear"),
+  aiMemoryExport: (format: "csv" | "txt", kind: "wordbanks" | "rules") =>
+    request<Blob>("GET", `/api/ai_memory/export?format=${format}&kind=${kind}`, undefined, { blob: true }),
 
   /* ---------- 报告 ---------- */
   report: (body: { operator: string; org: string; include_cover: boolean; report_filter?: "all" | "fluency" }) =>

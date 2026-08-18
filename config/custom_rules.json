@@ -42,6 +42,51 @@
           "suggestion": "正式公文中建议使用「我们」代替「咱们」。"
         }
       ]
+    },
+    {
+      "id": "ai_learning",
+      "name": "本地AI学习",
+      "category": "format_error",
+      "scope": "all",
+      "enabled": true,
+      "rules": [
+        {
+          "id": "rdfebe962",
+          "name": "用词错误",
+          "enabled": true,
+          "match_mode": "keyword",
+          "pattern": "立马搞定",
+          "severity": "medium",
+          "tag": "本地AI自学习生成-人工校对样本",
+          "suggestion": "尽快完成",
+          "source": "ai_learning",
+          "sample_id": "s460e9a22"
+        },
+        {
+          "id": "r1d9d9b92",
+          "name": "用词错误",
+          "enabled": true,
+          "match_mode": "keyword",
+          "pattern": "尽快安排",
+          "severity": "medium",
+          "tag": "本地AI自学习生成-人工校对样本",
+          "suggestion": "立即安排",
+          "source": "ai_learning",
+          "sample_id": "s460e9a22"
+        },
+        {
+          "id": "r7498eb0a",
+          "name": "语序错误",
+          "enabled": true,
+          "match_mode": "keyword",
+          "pattern": "请尽快落实处理",
+          "severity": "medium",
+          "tag": "本地AI自学习生成-人工校对样本",
+          "suggestion": "请尽快处理落实",
+          "source": "ai_learning",
+          "sample_id": "s460e9a22"
+        }
+      ]
     }
   ]
 }

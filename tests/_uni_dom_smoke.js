@@ -34,10 +34,10 @@ console.log("— 部署完整性 —");
 check("index.html 存在且引用新 JS", html.includes('assets/') && jsName.includes("index-"));
 check("CSS 资源存在", fs.existsSync(path.join(STATIC, (html.match(/href="(\/assets\/[^"]+\.css)"/) || [])[1].replace(/^\//, ""))));
 
-console.log("— 五标签导航 —");
-const tabs = ["自定义正则规则", "自定义词库", "词库与标准规则批量导入", "内置标准规则", "内置词库"];
+console.log("— 六标签导航 —");
+const tabs = ["自定义正则规则", "自定义词库", "词库与标准规则批量导入", "内置标准规则", "内置词库", "AI 规则词库智能生成"];
 for (const t of tabs) check(`打包含标签「${t}」`, js.includes(t));
-for (const k of ["customRules", "wordbanks", "template", "builtinRules", "builtinDicts"])
+for (const k of ["customRules", "wordbanks", "template", "builtinRules", "builtinDicts", "aiCreate"])
   check(`打包含标签键「${k}」`, js.includes(k));
 check("页面标题文案含「规则与词库统一管理」", js.includes("规则与词库统一管理"));
 
@@ -83,10 +83,12 @@ check("前端接入 /api/ai/test 与 /api/ai/status", js.includes("/api/ai/test"
 check("本地模型下拉选择与 aiModels 扫描", js.includes("aiModels") && js.includes("已同步扫描本机") && js.includes("手动输入模型名"));
 check("配置键 fluency 灵敏度与 ai 组并存", js.includes("fluency_sensitivity") && js.includes("base_url"));
 
-console.log("— 本地AI自学习（词库规则管理 · 人工确认样本） —");
-for (const s of ["本地AI自学习", "添加人工确认样本", "批量清空学习记忆", "本地AI学习生成", "aiMemory", "aiMemoryAddSample", "aiMemoryLearn", "aiMemoryToggle", "aiMemoryClear", "立即学习", "标记正确"])
+console.log("— AI 规则词库智能生成统一模块（对话式/文本式/自学习） —");
+for (const s of ["对话式创建", "文本式创建", "自学习记忆", "AI对话创建", "AI文本创建", "本地AI自学习生成-人工校对样本", "配对人工校对样本", "上传修订文档", "比对差异", "确认正确，加入本地记忆样本库", "立即学习", "导出词库 CSV", "导出规则 TXT", "批量清空学习记忆", "aiMemoryAddSample", "aiMemoryLearn", "aiMemoryToggle", "aiMemoryClear", "aiMemoryPair", "aiMemoryDiffs", "aiMemoryExport"])
   check(`打包含「${s}」`, js.includes(s));
-check("前端接入 /api/ai_memory 系列接口", js.includes("/api/ai_memory/samples") && js.includes("/api/ai_memory/clear"));
+check("前端接入 /api/ai/build/text 文本式创建", js.includes("/api/ai/build/text"));
+check("前端接入配对/差异/导出接口", js.includes("/api/ai_memory/pair") && js.includes("/api/ai_memory/diffs") && js.includes("/api/ai_memory/export"));
+check("设置含全局总开关 create_enabled", js.includes("create_enabled") && js.includes("启用本地AI智能生成&自学习"));
 check("隐私承诺文案（不自动采集/本机保存/不入报告）", js.includes("AI 不自动采集") && js.includes("不进入检测导出报告"));
 
 console.log("— AI 参考资料（参考知识注入）—");

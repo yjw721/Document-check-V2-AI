@@ -96,6 +96,7 @@ DEFAULTS: Dict[str, Any] = {
         "max_requests": 10,                    # 单文件最多调用次数（超出部分截断）
         "ref_enabled": True,                   # 核验时携带参考资料（标准/词汇/规范）
         "ref_max_chars": 2000,                 # 参考文本携带上限（字符数，超出截断）
+        "create_enabled": True,                # 本地AI智能生成&自学习 全局总开关（规则词库智能生成统一模块）
     },
     "log_cache": {
         "cache_expire_days": 7,

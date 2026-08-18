@@ -24,8 +24,7 @@ export const UNI_TABS = [
   { key: "template", name: "词库与标准规则批量导入", ic: "📥" },
   { key: "builtinRules", name: "内置标准规则", ic: "⚙️" },
   { key: "builtinDicts", name: "内置词库", ic: "📖" },
-  { key: "aiBuild", name: "AI 智能创建", ic: "🤖" },
-  { key: "aiMemory", name: "本地AI自学习", ic: "🧠" },
+  { key: "aiCreate", name: "AI 规则词库智能生成", ic: "🤖" },
 ] as const;
 
 export const SEV_LABEL: Record<string, string> = { high: "严重", medium: "一般", low: "轻微" };

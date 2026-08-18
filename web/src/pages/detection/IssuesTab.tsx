@@ -56,13 +56,14 @@ export default function IssuesTab() {
     try {
       const r = await api.aiMemoryAddSample({
         content,
-        source: `${i.file_name} ${i.location}`,
+        source_doc: i.file_name,
+        note: i.location,
       });
       if (!r.ok) {
         toast(r.message || "加入学习库失败", "err");
         return;
       }
-      toast("已确认正确并加入本地AI学习库，可在「规则与词库 → 本地AI自学习」中学习");
+      toast("已确认正确并加入本地AI学习库，可在「规则与词库 → AI 规则词库智能生成 → 自学习」中补充修订表述后学习");
     } catch (e) {
       toast((e as Error).message, "err");
     }

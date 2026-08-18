@@ -88,7 +88,11 @@ export default function TemplateImportTab() {
     try {
       await api.templateSelect({ rule_ids: [...selRules], entry_ids: [...selEntries] });
       const r = await api.templateImport({ rule_ids: [...selRules], entry_ids: [...selEntries] });
-      toast(`已导入 ${r.imported_rules} 条规则、${r.imported_entries} 条词条（追加，不覆盖原有配置）`);
+      const fr = r.filtered_rules ?? 0;
+      const fe = r.filtered_entries ?? 0;
+      toast(fr + fe > 0
+        ? `已导入 ${r.imported_rules} 条规则、${r.imported_entries} 条词条（追加，不覆盖原有配置）；后端过滤无效规则 ${fr} 条、词条 ${fe} 条`
+        : `已导入 ${r.imported_rules} 条规则、${r.imported_entries} 条词条（追加，不覆盖原有配置）`);
     } catch (e) {
       toast((e as Error).message, "err");
     } finally {

@@ -37,12 +37,26 @@ from checkers.ai_checker import (
     ai_check_file, test_connection as ai_test_connection,
     list_refs, save_ref, delete_ref, set_ref_enabled,
 )
-from checkers.ai_builder import build_dialogue as ai_build_dialogue, build_from_doc as ai_build_doc
+from checkers.ai_builder import (
+    build_dialogue as ai_build_dialogue, build_from_doc as ai_build_doc,
+    build_from_text as ai_build_text,
+)
+from checkers.rule_filter import (
+    filter_generated as rule_filter_generated,
+    filter_rules_payload as rule_filter_rules_payload,
+    filter_entries_payload as rule_filter_entries_payload,
+)
 from checkers.ai_memory import (
     payload as ai_memory_payload, set_enabled as ai_memory_set_enabled,
     is_enabled as ai_memory_is_enabled, learn_sample as ai_memory_learn,
     toggle_learned as ai_memory_toggle, delete_learned as ai_memory_delete,
-    clear_all as ai_memory_clear,
+    delete_sample as ai_memory_sample_delete, clear_all as ai_memory_clear,
+    save_source_docs as ai_memory_save_source_docs,
+    source_docs_status as ai_memory_source_status,
+    upload_revised as ai_memory_upload_revised,
+    compute_diffs as ai_memory_compute_diffs,
+    add_sample as ai_memory_add_sample,
+    export_learned as ai_memory_export,
 )
 from report.report_builder import build_report, default_report_name
 
@@ -318,6 +332,12 @@ def _run_detection(items: List[tuple], append: bool = False, tid: str = "") -> N
                 t["progress"] = 100.0
                 t["stage"] = "summary"
                 t["stage_text"] = STAGE_NAMES["summary"]
+        # 检测完成：自学习总开关开启时留存原始待检测文档（供人工修订配对学习）
+        try:
+            if ai_memory_is_enabled():
+                ai_memory_save_source_docs(items)
+        except Exception:  # noqa: BLE001 - 留存失败不影响检测
+            pass
 
 
 def _task_alive(tid: str) -> bool:
@@ -620,9 +640,11 @@ def api_custom_rules():
 
 @app.post("/api/custom_rules")
 def api_save_custom_rules(payload: Dict[str, Any]):
-    if not save_custom_rules(payload):
+    """保存自定义规则：入库前置校验（所有渠道统一），无效规则过滤并记录日志。"""
+    cleaned, dropped = rule_filter_rules_payload(payload, channel="manual_save")
+    if not save_custom_rules(cleaned):
         raise HTTPException(500, "自定义规则保存失败")
-    return {"ok": True}
+    return {"ok": True, "filtered_rules": len(dropped), "rejected": dropped}
 
 
 @app.get("/api/wordbanks")
@@ -632,9 +654,11 @@ def api_wordbanks():
 
 @app.post("/api/wordbanks")
 def api_save_wordbanks(payload: Dict[str, Any]):
-    if not save_wordbanks(payload):
+    """保存自定义词库：入库前置校验，无效词条过滤并记录日志。"""
+    cleaned, dropped = rule_filter_entries_payload(payload, channel="manual_save")
+    if not save_wordbanks(cleaned):
         raise HTTPException(500, "词库保存失败")
-    return {"ok": True}
+    return {"ok": True, "filtered_entries": len(dropped), "rejected": dropped}
 
 
 @app.post("/api/wordbanks/import")
@@ -704,20 +728,46 @@ def api_template_import(payload: Dict[str, Any]):
     built = p.build_import(rule_ids, entry_ids)
 
     imported_rules = imported_entries = 0
+    filtered_rules = filtered_entries = 0
+    rejected = []
+    from checkers.rule_filter import build_existing, filter_rules, filter_entries
+    existing = build_existing()
     if built["rule_count"]:
         data = load_custom_rules()
-        data.setdefault("groups", []).append(built["rule_group"])
-        if not save_custom_rules(data):
-            raise HTTPException(500, "自定义规则写入失败")
-        imported_rules = built["rule_count"]
+        # 范本解析渠道：入库前置校验（仅过滤新导入组，不触碰库内既有规则）
+        group = built["rule_group"]
+        kept, dropped = filter_rules(group.get("rules", []), existing, "template_import")
+        group["rules"] = kept
+        if not group["rules"]:
+            built["rule_count"] = 0
+        else:
+            data.setdefault("groups", []).append(group)
+            if not save_custom_rules(data):
+                raise HTTPException(500, "自定义规则写入失败")
+        imported_rules = len(kept)
+        filtered_rules = len(dropped)
+        rejected.extend(dropped)
+        existing["patterns"].update(
+            (str(r.get("match_mode") or "keyword"), str(r.get("pattern") or "").strip())
+            for r in kept if str(r.get("pattern") or "").strip())
     if built["entry_count"]:
         data = load_wordbanks()
-        data.setdefault("groups", []).append(built["entry_group"])
-        if not save_wordbanks(data):
-            raise HTTPException(500, "自定义词库写入失败")
-        imported_entries = built["entry_count"]
+        group = built["entry_group"]
+        kept, dropped = filter_entries(group.get("entries", []), existing, "template_import")
+        group["entries"] = kept
+        if not group["entries"]:
+            built["entry_count"] = 0
+        else:
+            data.setdefault("groups", []).append(group)
+            if not save_wordbanks(data):
+                raise HTTPException(500, "自定义词库写入失败")
+        imported_entries = len(kept)
+        filtered_entries = len(dropped)
+        rejected.extend(dropped)
 
-    return {"ok": True, "imported_rules": imported_rules, "imported_entries": imported_entries}
+    return {"ok": True, "imported_rules": imported_rules, "imported_entries": imported_entries,
+            "filtered_rules": filtered_rules, "filtered_entries": filtered_entries,
+            "rejected": rejected}
 
 
 @app.post("/api/template/clear")
@@ -821,18 +871,57 @@ def api_ai_refs_delete(payload: Dict[str, Any]):
     return {"ok": existed, "refs": list_refs()}
 
 
-# --- AI 规则/词库生成（对话式 + 文档自建） ---
+# --- AI 规则/词库智能生成（对话式 + 文本式 + 文档式，统一入库校验与来源标记） ---
+def _ai_create_enabled() -> bool:
+    """全局总开关「启用本地AI智能生成&自学习」（settings.ai.create_enabled）。"""
+    return bool((load_settings().get("ai") or {}).get("create_enabled", True))
+
+
+def _mark_source(result: Dict[str, Any], source: str, label: str) -> None:
+    """给生成结果打来源标记（对话创建 / 文本创建），保存时写入规则词库。"""
+    for r in result.get("rules") or []:
+        r.setdefault("source", source)
+        r.setdefault("tag", label)
+    for w in result.get("wordbanks") or []:
+        for e in w.get("entries") or []:
+            e.setdefault("source", source)
+            e.setdefault("tag", label)
+
+
 @app.post("/api/ai/build/dialogue")
 def api_ai_build_dialogue(payload: Dict[str, Any]):
-    """自然语言描述需求 → 生成词库分组 + 规则。"""
+    """对话式创建：自然语言描述需求 → 生成词库分组 + 规则（入库前置校验）。"""
+    if not _ai_create_enabled():
+        return {"ok": False, "message": "AI 智能生成已关闭（后台设置总开关），可手动编写或导入规则",
+                "result": {"wordbanks": [], "rules": []}}
     ai = load_settings().get("ai") or {}
     ok, msg, result = ai_build_dialogue(str(payload.get("text") or ""), ai)
-    return {"ok": ok, "message": msg, "result": result}
+    filter_stat = rule_filter_generated(result, channel="ai_build") if ok else {}
+    if ok:
+        _mark_source(result, "ai_dialogue", "AI对话创建")
+    return {"ok": ok, "message": msg, "result": result, "filter": filter_stat}
+
+
+@app.post("/api/ai/build/text")
+def api_ai_build_text(payload: Dict[str, Any]):
+    """文本式创建：粘贴准则/规范/范本文本 → AI 读取批量生成词库与规则（入库前置校验）。"""
+    if not _ai_create_enabled():
+        return {"ok": False, "message": "AI 智能生成已关闭（后台设置总开关），可手动编写或导入规则",
+                "result": {"wordbanks": [], "rules": []}}
+    ai = load_settings().get("ai") or {}
+    ok, msg, result = ai_build_text(str(payload.get("text") or ""), ai)
+    filter_stat = rule_filter_generated(result, channel="ai_build") if ok else {}
+    if ok:
+        _mark_source(result, "ai_text", "AI文本创建")
+    return {"ok": ok, "message": msg, "result": result, "filter": filter_stat}
 
 
 @app.post("/api/ai/build/doc")
 async def api_ai_build_doc(files: List[UploadFile] = File(...)):
-    """上传文档（.txt/.md/.csv/.docx/.pdf）→ AI 阅读提取词库与规则。"""
+    """文档式创建：上传文档（.txt/.md/.csv/.docx/.pdf）→ AI 阅读提取词库与规则。"""
+    if not _ai_create_enabled():
+        return {"ok": False, "message": "AI 智能生成已关闭（后台设置总开关），可手动编写或导入规则",
+                "result": {"wordbanks": [], "rules": []}}
     if not files:
         return {"ok": False, "message": "未收到文件", "result": {"wordbanks": [], "rules": []}}
     f = files[0]
@@ -844,13 +933,16 @@ async def api_ai_build_doc(files: List[UploadFile] = File(...)):
         return {"ok": False, "message": f"读取文件失败：{exc}", "result": {"wordbanks": [], "rules": []}}
     ai = load_settings().get("ai") or {}
     ok, msg, result = ai_build_doc(raw, f.filename or "doc.txt", ai)
-    return {"ok": ok, "message": msg, "result": result}
+    filter_stat = rule_filter_generated(result, channel="ai_build") if ok else {}
+    if ok:
+        _mark_source(result, "ai_text", "AI文本创建")
+    return {"ok": ok, "message": msg, "result": result, "filter": filter_stat}
 
 
-# --- 本地 AI 自学习记忆（全程离线，仅学习人工确认样本） ---
+# --- 本地 AI 自学习记忆（人工校对成对样本：系统留存原始文档 + 用户上传修订文档） ---
 @app.get("/api/ai_memory")
 def api_ai_memory_get():
-    """自学习总览：开关 / 样本列表 / 学习产出 / 统计。"""
+    """自学习总览：开关 / 配对状态 / 样本列表 / 学习产出 / 统计。"""
     return ai_memory_payload()
 
 
@@ -861,37 +953,55 @@ def api_ai_memory_toggle(payload: Dict[str, Any]):
     return {"ok": True, "enabled": ai_memory_is_enabled()}
 
 
+@app.post("/api/ai_memory/pair")
+async def api_ai_memory_pair(files: List[UploadFile] = File(...)):
+    """上传人工修改后的修订文档，与系统留存的原始检测文档配对。"""
+    if not _ai_create_enabled() or not ai_memory_is_enabled():
+        return {"ok": False, "message": "本地AI自学习已关闭，请先启用"}
+    if not files:
+        return {"ok": False, "message": "未收到修订文档", "data": ai_memory_payload()}
+    f = files[0]
+    try:
+        raw = await f.read()
+        if len(raw) > 50 * 1024 * 1024:
+            return {"ok": False, "message": "修订文档过大（>50MB）", "data": ai_memory_payload()}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "message": f"读取修订文档失败：{exc}", "data": ai_memory_payload()}
+    ok, msg, status = ai_memory_upload_revised(f.filename or "revised.docx", raw)
+    return {"ok": ok, "message": msg, "source_status": status, "data": ai_memory_payload()}
+
+
+@app.post("/api/ai_memory/diffs")
+def api_ai_memory_diffs():
+    """比对原始文档与修订文档文本差异，返回差异片段（错误 → 正确）供用户确认。"""
+    if not _ai_create_enabled() or not ai_memory_is_enabled():
+        return {"ok": False, "message": "本地AI自学习已关闭，请先启用", "diffs": []}
+    ok, msg, diffs = ai_memory_compute_diffs()
+    return {"ok": ok, "message": msg, "diffs": diffs}
+
+
 @app.post("/api/ai_memory/samples")
 def api_ai_memory_add_sample(payload: Dict[str, Any]):
-    """添加人工确认正确的学习样本（AI 不自动采集，仅用户主动提交）。"""
-    if not ai_memory_is_enabled():
-        return {"ok": False, "message": "本地AI自学习已关闭，请先在总开关中启用"}
-    content = str(payload.get("content") or "").strip()
-    if not content:
-        return {"ok": False, "message": "样本内容不能为空"}
-    if len(content) > 2000:
-        return {"ok": False, "message": "样本内容过长（上限 2000 字），请截取关键片段"}
-    import checkers.ai_memory as _m
-    data = _m.load_samples()
-    data.setdefault("samples", []).append({
-        "id": _m._gen_id("s"),
-        "content": content,
-        "source": str(payload.get("source") or "")[:120],
-        "note": str(payload.get("note") or "")[:200],
-        "status": "pending",
-        "enabled": True,
-        "learned_at": None,
-        "result_count": 0,
-        "error": "",
-        "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-    })
-    _m.save_samples(data)
-    return {"ok": True, "message": "样本已加入本地学习库", "data": ai_memory_payload()}
+    """用户确认后将配对差异片段加入本地记忆样本库（仅存差异文本，释放完整文档）。"""
+    if not _ai_create_enabled() or not ai_memory_is_enabled():
+        return {"ok": False, "message": "本地AI自学习已关闭，请先启用"}
+    diffs = payload.get("diffs") or []
+    ok, msg = ai_memory_add_sample(
+        diffs,
+        str(payload.get("source_doc") or "—"),
+        str(payload.get("revised_doc") or "—"),
+        note=str(payload.get("note") or ""),
+        content=str(payload.get("content") or ""),
+    )
+    return {"ok": ok, "message": msg, "data": ai_memory_payload()}
 
 
 @app.post("/api/ai_memory/samples/{sid}/learn")
 def api_ai_memory_learn(sid: str):
-    """对人工确认样本执行本地学习（提炼标准表述 → 词库条目 + 校验规则）。"""
+    """对成对样本执行本地学习（差异片段 → 词条 + 校验规则，入库前置校验）。"""
+    if not _ai_create_enabled():
+        return {"ok": False, "message": "AI 智能生成已关闭（后台设置总开关）",
+                "stats": {}, "data": ai_memory_payload()}
     ai = load_settings().get("ai") or {}
     ok, msg, stats = ai_memory_learn(sid, ai)
     return {"ok": ok, "message": msg, "stats": stats, "data": ai_memory_payload()}
@@ -912,11 +1022,9 @@ def api_ai_memory_sample_toggle(sid: str, payload: Dict[str, Any]):
 
 @app.delete("/api/ai_memory/samples/{sid}")
 def api_ai_memory_sample_delete(sid: str):
-    """删除样本（不影响其已学习产出的规则词条，产出在下方列表中管理）。"""
-    import checkers.ai_memory as _m
-    data = _m.load_samples()
-    data["samples"] = [s for s in data.get("samples", []) if s.get("id") != sid]
-    _m.save_samples(data)
+    """单条删除记忆样本（不影响其已学习产出的规则词条）。"""
+    if not ai_memory_sample_delete(sid):
+        return {"ok": False, "message": "样本不存在或已被删除"}
     return {"ok": True, "data": ai_memory_payload()}
 
 
@@ -941,6 +1049,21 @@ def api_ai_memory_clear():
     """批量清空本地学习记忆（仅学习生成的数据，不动用户手动导入编写的规则词库）。"""
     removed = ai_memory_clear()
     return {"ok": True, "removed": removed, "data": ai_memory_payload()}
+
+
+@app.get("/api/ai_memory/export")
+def api_ai_memory_export(format: str = "txt", kind: str = "wordbanks"):
+    """导出自学习产出的词库/规则文件（csv / txt，用于备份迁移）。"""
+    from fastapi.responses import Response
+    ok, msg, fname, content = ai_memory_export(format, kind)
+    if not ok:
+        raise HTTPException(400, msg)
+    media = "text/csv; charset=utf-8" if format == "csv" else "text/plain; charset=utf-8"
+    return Response(
+        content="\ufeff" + content if format == "csv" else content,
+        media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
 
 
 # ---------------------------------------------------------------------------

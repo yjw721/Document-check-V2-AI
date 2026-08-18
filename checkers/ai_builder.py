@@ -39,6 +39,11 @@ _SYS_PROMPT = (
     "regex 必须能在 Python re 中运行。\n"
     "3. 数量宁精勿滥：词库最多 30 条、规则最多 15 条；没有合适的就返回空数组。\n"
     "4. severity 按严重程度取 low/medium/high。\n"
+    "5. 规则用途为【错误检测】：pattern 必须是错误写法、错别字、不规范表述、"
+    "禁用语句；suggestion 给出【标准正确术语】。严禁生成「匹配内容和替换内容一模一样」"
+    "的规则；禁止拿标准正确术语作为匹配条件（标准术语只能放在 suggestion 栏）；"
+    "禁止使用单个通用虚词作为 pattern。输出完成后自行自检，存在 pattern 等于 "
+    "suggestion 的条目直接不要输出。\n"
 )
 
 _DOC_PROMPT = (
@@ -54,6 +59,11 @@ _DOC_PROMPT = (
     ' "rules":[{"name":"规则名","match_mode":"keyword或regex","pattern":"关键词或正则表达式",'
     '"severity":"low或medium或high","suggestion":"整改建议"}]}\n'
     "数量宁精勿滥：词库最多 30 条、规则最多 15 条；没有合适的就返回空数组。\n"
+    "规则用途为【错误检测】：pattern 必须是错误写法、错别字、不规范表述、"
+    "禁用语句；suggestion 给出【标准正确术语】。严禁生成「匹配内容和替换内容一模一样」"
+    "的规则；禁止拿标准正确术语作为匹配条件（标准术语只能放在 suggestion 栏）；"
+    "禁止使用单个通用虚词作为 pattern。输出完成后自行自检，存在 pattern 等于 "
+    "suggestion 的条目直接不要输出。\n"
 )
 
 _DOC_BULLET_PROMPT = (
@@ -286,3 +296,13 @@ def build_from_doc(raw: bytes, filename: str, ai: Dict[str, Any]) -> Tuple[bool,
         ok, msg, result = _gen(ai, _DOC_PROMPT, "上传文档内容：\n" + doc_text)
         return ok, (msg + "（要点提取为空，已直接生成）" if ok else msg), result
     return _gen(ai, _DOC_PROMPT, "以下是根据上传文档提取的检测要点，请据此生成词库与规则：\n" + bullets)
+
+
+def build_from_text(text: str, ai: Dict[str, Any]) -> Tuple[bool, str, Dict[str, Any]]:
+    """文本式创建：粘贴准则/规范/范本文本 → AI 读取并批量生成检测词库与校验规则。"""
+    text = (text or "").strip()
+    if not text:
+        return False, "粘贴内容不能为空", {"wordbanks": [], "rules": []}
+    if len(text) > 6000:
+        text = text[:6000] + "…"
+    return _gen(ai, _DOC_PROMPT, "用户粘贴的准则/规范/范本文本：\n" + text)

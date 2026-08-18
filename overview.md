@@ -395,3 +395,18 @@
 - 修复 _extract_json_obj：模型输出损坏（截断/重复）时原逻辑误取最内层碎片对象，改为「覆盖范围最大候选优先」。
 - 修复 settings.json ai.model 回退为 deepseek-r1:8b（该 tag 禁思考无效致空输出）→ 切回已验证的 qwen3:8b。
 - 验证：E2E 全链路（添加→学习 39s→合并 5 词条+5 规则→开关同步→样本删除→报告不含样本/「本地AI学习」→批量清空仅清学习数据→总开关拒绝添加）；文档自建/对话式生成回归通过；静态冒烟 84/84；run_check_test 报告生成正常。
+### 2026-08-18 续5：规则入库前置校验（强制，所有渠道统一执行）
+- 新增 checkers/rule_filter.py 统一校验：①匹配式与建议替换完全相同→丢弃；②匹配式/建议为空或全空白→丢弃；③匹配式为纯通用无意义单字（虚词黑名单）→丢弃；④标准正确术语（已作为库内建议出现的词）不能作匹配触发条件；⑤匹配式+模式与库内已有规则完全一致→去重拒绝；正则无法编译→丢弃。被丢弃项写入 logs/rule_filter.log（时间/渠道/名称/匹配式/建议/原因），不写库、不推前端。
+- 覆盖渠道：AI 生成（/api/ai/build/dialogue、/api/ai/build/doc 返回 filter 统计：原始/过滤/实际生效+丢弃明细）、范本解析导入（仅过滤新增组，不触碰库内既有规则）、本地自学习（_merge_to_groups 前置校验，learn stats 新增 filtered）、手动保存（/api/custom_rules、/api/wordbanks 仅校验新增 id 项，历史数据保持原样，避免保存时静默改动）。
+- AI 生成 System Prompt（_SYS_PROMPT/_DOC_PROMPT/_LEARN_PROMPT）追加生成阶段约束：pattern 必须是错误写法/错别字/不规范表述/禁用语句，suggestion 给标准正确术语；严禁 pattern=suggestion；禁止标准术语作匹配；禁止单字虚词作 pattern；输出后自行自检删除无效条目（约束+后端强制双保险）。
+- 前端：AiBuildTab 生成完成弹窗「本次生成原始规则X条，后端过滤无效规则Y条，实际生效Z条」+ 丢弃原因明细列表；保存时被过滤再有 toast 提示；AiMemoryTab/TemplateImportTab 显示拦截数量。
+- 验证：单元+E2E 14/14（手动保存过滤、filter_generated 去重、自学习拦截、日志留存）；真实 qwen3:8b 对话式生成：2 规则→1 有效 1 重复拦截，3 词条→1 相同词条拦截，filter 统计正确；真实自学习：filtered=1 拦截「收益法=收益法」无效规则；run_check_test 回归通过；冒烟 84/84；页面/产物 200。
+- 修 bug：filter_generated 曾按 dict 长度统计条数（sum(len(r))）→ 改 len(rls)；批量校验去重集合未即时更新导致同批重复漏拦 → 改为逐条校验+即时更新。
+- 注意：演示组曾因「修改 rule_filter 后未重启服务，旧版全量校验误删库内重复规则」被清空 → 已从 HEAD 恢复并验证新版对库内已有数据放行。
+### 2026-08-18 晚：AI 规则词库智能生成统一模块（对话式 / 文本式 / 自学习三合一）
+- 合并：原「AI 智能创建」+「本地AI自学习」两个标签合并为「AI 规则词库智能生成」一个标签，内部三个子页（💬对话式创建 / 📝文本式创建 / 🧠自学习记忆）；所有生成渠道统一入库前置校验（rule_filter）+ 来源标记：AI对话创建（ai_dialogue）/ AI文本创建（ai_text，含粘贴文本与上传文档自建）/ 本地AI自学习生成-人工校对样本（ai_learning，SOURCE_LABEL 新标记）。
+- 文本式创建：checkers/ai_builder.py 新增 build_from_text（粘贴准则/规范/范本 → 本地 AI 批量提炼词库与规则），新增 POST /api/ai/build/text（返回 filter 统计）。
+- 自学习升级为「成对样本」：检测任务完成时自动留存原始待检测文档副本（config/ai_memory/source_docs/ + source_docs.json，ai_memory_save_source_docs，仅自学习总开关开启时）；用户上传人工修订文档配对（POST /api/ai_memory/pair），系统按段落比对提取错误→正确差异片段（POST /api/ai_memory/diffs，difflib 行级对齐，无需模型）；确认后加入样本库（仅存差异文本，完整文档即时释放，缓存失效有友好提示）；学习仅基于差异对提炼（_LEARN_PROMPT 重写为 corrections[].error/corrected + rules[]），旧版「标记正确」入口兼容（content 转单条差异，修订值待补充）。
+- 导出：新增 GET /api/ai_memory/export?format=csv|txt&kind=wordbanks|rules，前端 4 个导出按钮（词库/规则 × CSV/TXT，CSV 带 BOM 兼容 Excel）。
+- 全局总开关：settings ai.create_enabled（默认 true），「AI 智能核验配置」弹窗新增开关；关闭后对话式/文本式/文档式创建与自学习配对比对全部拦截并友好提示，已有规则词库与学习记忆不受影响。
+- 验证：E2E 27/27（开关拦截、文本式空校验、配对全链路、差异提取、样本入库+文档释放、content 兼容、导出四格式、非法格式 400、开关幂等、演示组完好）；真实 qwen3:8b 自学习：差异对 → 3 词条+3 规则全部带 ai_learning 标记入库（filtered=0）；真实文本式创建 13s 生成 2 规则（金额单位/日期格式）tag=AI文本创建；静态冒烟 98/98；前端构建通过并已部署。

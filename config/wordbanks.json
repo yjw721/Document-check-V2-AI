@@ -27,6 +27,42 @@
           "enabled": true
         }
       ]
+    },
+    {
+      "id": "ai_learning_wb",
+      "name": "本地AI学习",
+      "module": "text_word",
+      "scope": "all",
+      "enabled": true,
+      "entries": [
+        {
+          "id": "e4b486951",
+          "keyword": "我们立马搞定评估工作",
+          "tag": "本地AI自学习生成-人工校对样本",
+          "suggestion": "我们尽快完成评估工作",
+          "enabled": true,
+          "source": "ai_learning",
+          "sample_id": "s460e9a22"
+        },
+        {
+          "id": "ec55e322b",
+          "keyword": "并尽快安排专家审核",
+          "tag": "本地AI自学习生成-人工校对样本",
+          "suggestion": "并立即安排专家审核",
+          "enabled": true,
+          "source": "ai_learning",
+          "sample_id": "s460e9a22"
+        },
+        {
+          "id": "e70c2f67d",
+          "keyword": "请尽快落实处理",
+          "tag": "本地AI自学习生成-人工校对样本",
+          "suggestion": "请尽快处理落实",
+          "enabled": true,
+          "source": "ai_learning",
+          "sample_id": "s460e9a22"
+        }
+      ]
     }
   ]
 }

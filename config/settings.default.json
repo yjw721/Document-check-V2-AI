@@ -46,6 +46,7 @@
     "max_chars": 3000,
     "max_requests": 10,
     "ref_enabled": true,
-    "ref_max_chars": 2000
+    "ref_max_chars": 2000,
+    "create_enabled": true
   }
 }
