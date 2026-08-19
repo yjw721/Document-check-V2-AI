@@ -516,7 +516,7 @@ def ai_check_file(path: str, ftype: str, issues_out: List[Issue],
                   limit: int = 800, max_files_issues: int = 0,
                   cancel: Optional[Callable[[], bool]] = None,
                   on_token: Optional[Callable[[str, str], None]] = None,
-                  on_chunk: Optional[Callable[[int, int], None]] = None) -> Tuple[int, str]:
+                  on_chunk: Optional[Callable[[int, int, str], None]] = None) -> Tuple[int, str]:
     """
     对单个文件执行 AI 智能核验，把命中问题追加到 issues_out。
 
@@ -524,7 +524,8 @@ def ai_check_file(path: str, ftype: str, issues_out: List[Issue],
     cancel 可选：返回 True 表示任务已取消，请求间隙立即中止。
     on_token(text, kind)：可选流式回调（kind ∈ content / thinking），
     local 模式逐 token 触发，用于实时展示本地模型推理过程。
-    on_chunk(k, total)：每段推理开始前回调（段序号 / 总段数）。
+    on_chunk(k, total, preview)：每段推理开始前回调（段序号 / 总段数 /
+    当前段文本摘要，供界面展示模型正在分析的内容）。
     """
     ai = {**DEFAULTS, **(cfg or {})}
     if not ai.get("enabled"):
@@ -563,7 +564,7 @@ def ai_check_file(path: str, ftype: str, issues_out: List[Issue],
             break
         if on_chunk:
             try:
-                on_chunk(k, len(chunks))
+                on_chunk(k, len(chunks), clip(text, 120))
             except Exception:  # noqa: BLE001 - 回调异常不影响核验
                 pass
         try:

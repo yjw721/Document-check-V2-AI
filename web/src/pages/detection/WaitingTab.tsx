@@ -147,7 +147,7 @@ export default function WaitingTab() {
         )}
 
         {/* AI 智能核验 · 本地模型推理流（逐 token 实时展示） */}
-        {snap?.ai_stream && (snap.ai_stream.content || snap.ai_stream.thinking) && (
+        {snap?.ai_stream && (
           <div className="mt-4">
             <AiStreamPanel
               stream={snap.ai_stream}
@@ -183,30 +183,79 @@ export default function WaitingTab() {
 /* ---------- AI 智能核验 · 本地模型推理流面板 ---------- */
 function AiStreamPanel({ stream, running }: { stream: AiStream; running: boolean }) {
   const boxRef = useRef<HTMLDivElement>(null);
+  const [viewChunk, setViewChunk] = useState<number | null>(null);
   useEffect(() => {
     const box = boxRef.current;
     if (box) box.scrollTop = box.scrollHeight;
   }, [stream.content, stream.thinking]);
+
+  const history = stream.history ?? [];
+  const viewed = history.find((h) => h.chunk === viewChunk) ?? null;
+  const displayContent = viewed ? viewed.content : stream.content;
+  const displayThinking = viewed ? viewed.thinking : stream.thinking;
 
   return (
     <HoloCard className="overflow-hidden p-0" glow="sm">
       <div className="flex flex-wrap items-center gap-2 border-b border-white/10 px-4 py-2.5">
         <span className="text-sm">🧠</span>
         <b className="text-xs font-semibold tracking-wide text-white/85">AI 智能核验 · 本地模型推理</b>
-        <HoloBadge tone={running ? "warn" : "gray"}>{running ? "推理中…" : "该文件推理完成"}</HoloBadge>
+        <HoloBadge tone={running ? "warn" : "gray"}>
+          {running ? "推理中…" : stream.total > 0 ? "推理完成" : "等待推理"}
+        </HoloBadge>
         <span className="ml-auto truncate text-[11px] text-white/40" title={stream.file}>
           {stream.file}
         </span>
-        <span className="shrink-0 text-[11px] text-white/50">第 {stream.chunk}/{stream.total || "?"} 段</span>
+        <span className="shrink-0 text-[11px] text-white/50">
+          第 {stream.chunk}/{stream.total || "?"} 段
+        </span>
       </div>
 
-      {stream.thinking && (
+      {/* 当前段输入预览：模型正在分析的内容 */}
+      {(stream.preview || (viewed && viewed.preview)) && (
+        <div className="border-b border-white/[0.07] bg-white/[0.02] px-4 py-2">
+          <div className="text-[10px] tracking-wide text-white/35">
+            {viewed ? `已归档 · 第 ${viewed.chunk} 段输入` : running ? "模型正在分析以下文本" : "本段输入文本"}
+          </div>
+          <p className="mt-0.5 line-clamp-2 break-all text-[11px] text-white/55">
+            {viewed ? viewed.preview : stream.preview}
+          </p>
+        </div>
+      )}
+
+      {history.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 border-b border-white/[0.07] bg-white/[0.02] px-4 py-2">
+          <span className="text-[10px] text-white/35">分段回看</span>
+          {history.map((h) => (
+            <button
+              key={h.chunk}
+              onClick={() => setViewChunk(viewChunk === h.chunk ? null : h.chunk)}
+              className={`rounded-lg border px-2 py-0.5 text-[11px] transition-all duration-300 ${
+                viewChunk === h.chunk
+                  ? "border-[rgba(79,214,201,0.45)] bg-[rgba(79,214,201,0.12)] text-[var(--tone-cyan)]"
+                  : "border-white/10 bg-white/[0.04] text-white/55 hover:text-white"
+              }`}
+            >
+              第 {h.chunk} 段
+            </button>
+          ))}
+          {viewChunk !== null && (
+            <button
+              onClick={() => setViewChunk(null)}
+              className="rounded-lg px-2 py-0.5 text-[11px] text-[var(--tone-cyan)] hover:bg-white/5"
+            >
+              返回实时 ✕
+            </button>
+          )}
+        </div>
+      )}
+
+      {displayThinking && (
         <details className="border-b border-white/[0.07] bg-white/[0.02]">
           <summary className="cursor-pointer px-4 py-2 text-[11px] text-white/55 select-none hover:text-white/85">
-            🧠 模型思考链（{stream.thinking.length} 字）{running ? "· 生成中…" : ""}
+            🧠 模型思考链（{displayThinking.length} 字）{running && !viewed ? "· 生成中…" : ""}
           </summary>
           <div className="max-h-44 overflow-y-auto border-t border-white/[0.07] px-4 py-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-white/60">
-            {stream.thinking}
+            {displayThinking}
           </div>
         </details>
       )}
@@ -215,14 +264,14 @@ function AiStreamPanel({ stream, running }: { stream: AiStream; running: boolean
         ref={boxRef}
         className="max-h-72 overflow-y-auto bg-[rgba(10,10,31,0.6)] px-4 py-3 font-mono text-[12px] leading-relaxed whitespace-pre-wrap text-cyan-100/85"
       >
-        {stream.content || (running ? "等待模型输出…" : "（该段无模型输出）")}
-        {running && (
+        {displayContent || (running ? "等待模型输出…" : "（该段无模型输出）")}
+        {running && !viewed && (
           <span className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse rounded-sm bg-[var(--tone-cyan)] align-middle" />
         )}
       </div>
 
       <div className="border-t border-white/[0.07] px-4 py-1.5 text-[10px] text-white/35">
-        全程离线 · 逐 token 实时输出（联网模式不展示逐字推理）
+        全程离线 · 逐 token 实时输出 · 每段推理输入与输出均可回看（联网模式不展示逐字推理）
       </div>
     </HoloCard>
   );

@@ -67,12 +67,22 @@ export interface IssuesData {
 /* ---------- 核验任务（等待界面） ---------- */
 export type TaskStatus = "running" | "done" | "cancelled" | "error";
 
+export interface AiChunkOut {
+  chunk: number;
+  total: number;
+  content: string;
+  thinking: string;
+  preview?: string;
+}
+
 export interface AiStream {
   file: string;
   chunk: number;
   total: number;
   content: string;
   thinking: string;
+  preview: string;
+  history: AiChunkOut[];
 }
 
 export interface TaskSnapshot {

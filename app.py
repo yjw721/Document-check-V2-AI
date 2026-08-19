@@ -400,7 +400,8 @@ def _run_ai_verify(items: List[tuple], results: List[Any], ai_cfg: Dict[str, Any
             t0 = _TASKS.get(tid)
             if t0:
                 t0["ai_stream"] = {"file": n, "chunk": 0, "total": 0,
-                                   "content": "", "thinking": ""}
+                                   "content": "", "thinking": "",
+                                   "preview": "", "history": []}
 
         def _tok(text: str, kind: str) -> None:
             with _TASK_LOCK:
@@ -413,7 +414,7 @@ def _run_ai_verify(items: List[tuple], results: List[Any], ai_cfg: Dict[str, Any
                 key = "thinking" if kind == "thinking" else "content"
                 s[key] = (s.get(key, "") + text)[-20000:]
 
-        def _chunk(k: int, total: int) -> None:
+        def _chunk(k: int, total: int, preview: str) -> None:
             with _TASK_LOCK:
                 t = _TASKS.get(tid)
                 if not t:
@@ -421,10 +422,19 @@ def _run_ai_verify(items: List[tuple], results: List[Any], ai_cfg: Dict[str, Any
                 s = t.get("ai_stream")
                 if not s:
                     return
+                # 归档上一段输出，供界面分段回看
+                if s.get("content") or s.get("thinking"):
+                    s.setdefault("history", []).append({
+                        "chunk": s.get("chunk"), "total": s.get("total"),
+                        "content": s.get("content", ""), "thinking": s.get("thinking", ""),
+                        "preview": s.get("preview", ""),
+                    })
+                    s["history"] = s["history"][-12:]
                 s["chunk"] = k
                 s["total"] = total
                 s["content"] = ""
                 s["thinking"] = ""
+                s["preview"] = preview
 
         try:
             added, note = ai_check_file(p, detect_file_type(n), res.issues,
