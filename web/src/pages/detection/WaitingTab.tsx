@@ -6,7 +6,7 @@ import TaskProgress from "../../components/common/TaskProgress";
 import ThinkingLog from "../../components/common/ThinkingLog";
 import { api } from "../../lib/api";
 import { taskState, TASK_KEY } from "../../lib/taskState";
-import type { TaskSnapshot } from "../../lib/types";
+import type { AiStream, TaskSnapshot } from "../../lib/types";
 import { useToast } from "../../components/ui/Toast";
 
 /* 标签3 · 核验等待界面：实时进度条 + AI 思考过程动态面板 + 取消/错误/自动跳转 */
@@ -146,6 +146,16 @@ export default function WaitingTab() {
           </div>
         )}
 
+        {/* AI 智能核验 · 本地模型推理流（逐 token 实时展示） */}
+        {snap?.ai_stream && (snap.ai_stream.content || snap.ai_stream.thinking) && (
+          <div className="mt-4">
+            <AiStreamPanel
+              stream={snap.ai_stream}
+              running={snap.status === "running" && snap.stage === "ai"}
+            />
+          </div>
+        )}
+
         {finished && (
           <div className="mt-5 flex flex-wrap items-center gap-2">
             {done ? (
@@ -167,5 +177,53 @@ export default function WaitingTab() {
         )}
       </HoloCard>
     </div>
+  );
+}
+
+/* ---------- AI 智能核验 · 本地模型推理流面板 ---------- */
+function AiStreamPanel({ stream, running }: { stream: AiStream; running: boolean }) {
+  const boxRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const box = boxRef.current;
+    if (box) box.scrollTop = box.scrollHeight;
+  }, [stream.content, stream.thinking]);
+
+  return (
+    <HoloCard className="overflow-hidden p-0" glow="sm">
+      <div className="flex flex-wrap items-center gap-2 border-b border-white/10 px-4 py-2.5">
+        <span className="text-sm">🧠</span>
+        <b className="text-xs font-semibold tracking-wide text-white/85">AI 智能核验 · 本地模型推理</b>
+        <HoloBadge tone={running ? "warn" : "gray"}>{running ? "推理中…" : "该文件推理完成"}</HoloBadge>
+        <span className="ml-auto truncate text-[11px] text-white/40" title={stream.file}>
+          {stream.file}
+        </span>
+        <span className="shrink-0 text-[11px] text-white/50">第 {stream.chunk}/{stream.total || "?"} 段</span>
+      </div>
+
+      {stream.thinking && (
+        <details className="border-b border-white/[0.07] bg-white/[0.02]">
+          <summary className="cursor-pointer px-4 py-2 text-[11px] text-white/55 select-none hover:text-white/85">
+            🧠 模型思考链（{stream.thinking.length} 字）{running ? "· 生成中…" : ""}
+          </summary>
+          <div className="max-h-44 overflow-y-auto border-t border-white/[0.07] px-4 py-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-white/60">
+            {stream.thinking}
+          </div>
+        </details>
+      )}
+
+      <div
+        ref={boxRef}
+        className="max-h-72 overflow-y-auto bg-[rgba(10,10,31,0.6)] px-4 py-3 font-mono text-[12px] leading-relaxed whitespace-pre-wrap text-cyan-100/85"
+      >
+        {stream.content || (running ? "等待模型输出…" : "（该段无模型输出）")}
+        {running && (
+          <span className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse rounded-sm bg-[var(--tone-cyan)] align-middle" />
+        )}
+      </div>
+
+      <div className="border-t border-white/[0.07] px-4 py-1.5 text-[10px] text-white/35">
+        全程离线 · 逐 token 实时输出（联网模式不展示逐字推理）
+      </div>
+    </HoloCard>
   );
 }

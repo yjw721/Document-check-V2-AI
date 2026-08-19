@@ -514,12 +514,17 @@ def _chunk_blocks(blocks: List[Tuple[str, str]], max_chars: int,
 def ai_check_file(path: str, ftype: str, issues_out: List[Issue],
                   cfg: Optional[Dict[str, Any]] = None,
                   limit: int = 800, max_files_issues: int = 0,
-                  cancel: Optional[Callable[[], bool]] = None) -> Tuple[int, str]:
+                  cancel: Optional[Callable[[], bool]] = None,
+                  on_token: Optional[Callable[[str, str], None]] = None,
+                  on_chunk: Optional[Callable[[int, int], None]] = None) -> Tuple[int, str]:
     """
     对单个文件执行 AI 智能核验，把命中问题追加到 issues_out。
 
     返回 (追加条数, 状态说明)。任何失败都不抛异常，降级为说明文字。
     cancel 可选：返回 True 表示任务已取消，请求间隙立即中止。
+    on_token(text, kind)：可选流式回调（kind ∈ content / thinking），
+    local 模式逐 token 触发，用于实时展示本地模型推理过程。
+    on_chunk(k, total)：每段推理开始前回调（段序号 / 总段数）。
     """
     ai = {**DEFAULTS, **(cfg or {})}
     if not ai.get("enabled"):
@@ -549,16 +554,22 @@ def ai_check_file(path: str, ftype: str, issues_out: List[Issue],
         ref_text = _load_ref_text(int(ai.get("ref_max_chars") or 2000))
     added = 0
     fail_reasons: List[str] = []
-    for loc, text in chunks:
+    for k, (loc, text) in enumerate(chunks, 1):
         if cancel and cancel():
             return added, f"任务已取消（已完成 {added} 条）"
         if max_files_issues > 0 and len(issues_out) >= max_files_issues:
             break
         if limit > 0 and len(issues_out) >= limit:
             break
+        if on_chunk:
+            try:
+                on_chunk(k, len(chunks))
+            except Exception:  # noqa: BLE001 - 回调异常不影响核验
+                pass
         try:
             with _AI_SEM:
-                content = _call_ollama(ai, _messages(text, ref_text)) if mode == "local" \
+                content = _call_ollama(ai, _messages(text, ref_text),
+                                       on_token=on_token) if mode == "local" \
                     else _call_openai(ai, _messages(text, ref_text))
             items = _parse_issues(content)
         except AiError as exc:

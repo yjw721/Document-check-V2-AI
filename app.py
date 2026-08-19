@@ -145,6 +145,7 @@ def _task_snapshot(tid: str) -> Optional[Dict[str, Any]]:
             "logs": list(t["logs"]),
             "error": t["error"],
             "result": t.get("result"),
+            "ai_stream": t.get("ai_stream"),
         }
 
 
@@ -394,11 +395,43 @@ def _run_ai_verify(items: List[tuple], results: List[Any], ai_cfg: Dict[str, Any
         p, n = pair
         res = by_name[n]
         cancelled = (lambda: (tid and not _task_alive(tid))) if tid else None
+        # 流式推理缓冲：本文件重置，逐 token 追加（前端轮询实时展示）
+        with _TASK_LOCK:
+            t0 = _TASKS.get(tid)
+            if t0:
+                t0["ai_stream"] = {"file": n, "chunk": 0, "total": 0,
+                                   "content": "", "thinking": ""}
+
+        def _tok(text: str, kind: str) -> None:
+            with _TASK_LOCK:
+                t = _TASKS.get(tid)
+                if not t:
+                    return
+                s = t.get("ai_stream")
+                if not s:
+                    return
+                key = "thinking" if kind == "thinking" else "content"
+                s[key] = (s.get(key, "") + text)[-20000:]
+
+        def _chunk(k: int, total: int) -> None:
+            with _TASK_LOCK:
+                t = _TASKS.get(tid)
+                if not t:
+                    return
+                s = t.get("ai_stream")
+                if not s:
+                    return
+                s["chunk"] = k
+                s["total"] = total
+                s["content"] = ""
+                s["thinking"] = ""
+
         try:
             added, note = ai_check_file(p, detect_file_type(n), res.issues,
                                         cfg=ai_cfg, limit=limit,
                                         max_files_issues=limit,
-                                        cancel=cancelled)
+                                        cancel=cancelled,
+                                        on_token=_tok, on_chunk=_chunk)
         except Exception as exc:  # noqa: BLE001 - AI 阶段异常不中断
             added, note = 0, f"AI 核验异常：{type(exc).__name__}：{str(exc)[:100]}"
         if added:

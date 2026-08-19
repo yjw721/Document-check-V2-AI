@@ -67,6 +67,14 @@ export interface IssuesData {
 /* ---------- 核验任务（等待界面） ---------- */
 export type TaskStatus = "running" | "done" | "cancelled" | "error";
 
+export interface AiStream {
+  file: string;
+  chunk: number;
+  total: number;
+  content: string;
+  thinking: string;
+}
+
 export interface TaskSnapshot {
   status: TaskStatus;
   progress: number;
@@ -75,6 +83,7 @@ export interface TaskSnapshot {
   logs: string[];
   error: string;
   result?: ScanResult | null;
+  ai_stream?: AiStream | null;
 }
 
 export interface TaskStartResult {
