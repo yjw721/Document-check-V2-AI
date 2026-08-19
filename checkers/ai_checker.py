@@ -144,30 +144,79 @@ def _http_json(url: str, payload: Dict[str, Any], headers: Dict[str, str],
 
 def _call_ollama(cfg: Dict[str, Any], messages: List[Dict[str, str]],
                  think: Optional[bool] = None,
-                 options: Optional[Dict[str, Any]] = None) -> str:
+                 options: Optional[Dict[str, Any]] = None,
+                 on_token: Optional[Callable[[str, str], None]] = None) -> str:
     """Ollama 原生 /api/chat（本地，零联网）。
 
     think=True/False：显式启用/禁用思考链（qwen3 等 thinking 模型生效，
     其它模型忽略该字段）。
     options：透传 Ollama options（如 num_predict 限制输出长度）。
+    on_token(text, kind)：可选流式回调，kind ∈ {"content", "thinking"}，
+    用于实时展示本地模型推理过程；传入时以 stream 模式逐 chunk 输出。
     """
     base = str(cfg.get("base_url") or DEFAULTS["base_url"]).rstrip("/")
     url = base + "/api/chat"
     payload: Dict[str, Any] = {
         "model": cfg.get("model") or DEFAULTS["model"],
         "messages": messages,
-        "stream": False,
+        "stream": bool(on_token),
     }
     if think is not None:
         payload["think"] = think
     if options:
         payload["options"] = options
+    if on_token:
+        return _call_ollama_stream(url, payload, on_token,
+                                   float(cfg.get("timeout") or DEFAULTS["timeout"]))
     resp = _http_json(url, payload, {}, float(cfg.get("timeout") or DEFAULTS["timeout"]))
     msg = resp.get("message") or {}
     content = msg.get("content")
     if not isinstance(content, str):
         raise AiError(f"Ollama 响应缺少 message.content：{str(resp)[:120]}")
     return content
+
+
+def _call_ollama_stream(url: str, payload: Dict[str, Any],
+                        on_token: Callable[[str, str], None], timeout: float) -> str:
+    """流式调用 Ollama /api/chat：逐行解析 NDJSON chunk 并回调增量。
+
+    chunk 结构：{"message":{"content":"...","thinking":"..."}}。
+    qwen3 等 thinking 模型启用 think=True 时 thinking 字段先行输出，
+    非思考模型只有 content。返回拼接后的完整 content。
+    """
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+    buf: List[str] = []
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            for raw in resp:
+                line = raw.decode("utf-8", errors="replace").strip()
+                if not line:
+                    continue
+                try:
+                    chunk = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                msg = chunk.get("message") or {}
+                content = msg.get("content")
+                if isinstance(content, str) and content:
+                    buf.append(content)
+                    on_token(content, "content")
+                thinking = msg.get("thinking")
+                if isinstance(thinking, str) and thinking:
+                    on_token(thinking, "thinking")
+                if chunk.get("done"):
+                    break
+    except urllib.error.HTTPError as exc:
+        body = ""
+        try:
+            body = exc.read().decode("utf-8", errors="replace")[:200]
+        except Exception:  # noqa: BLE001
+            pass
+        raise AiError(f"HTTP {exc.code}：{body or exc.reason}") from exc
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise AiError(f"连接失败：{exc}") from exc
+    return "".join(buf)
 
 
 def _call_openai(cfg: Dict[str, Any], messages: List[Dict[str, str]]) -> str:

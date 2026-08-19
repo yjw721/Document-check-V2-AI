@@ -9,6 +9,7 @@ import type {
   AiDiff,
   AiMemoryData,
   AiMemoryResp,
+  LearnLogsResp,
   AiRef,
   AiSettings,
   CustomRulesData,
@@ -175,6 +176,8 @@ export const api = {
   }) => request<AiMemoryResp>("POST", "/api/ai_memory/samples", body),
   aiMemoryLearn: (sid: string) =>
     request<AiMemoryResp>("POST", `/api/ai_memory/samples/${sid}/learn`),
+  aiMemoryLearnLogs: (sid: string) =>
+    request<LearnLogsResp>("GET", `/api/ai_memory/samples/${sid}/learn/logs`),
   aiMemorySampleToggle: (sid: string, enabled: boolean) =>
     request<AiMemoryResp>("POST", `/api/ai_memory/samples/${sid}/toggle`, { enabled }),
   aiMemorySampleDelete: (sid: string) =>

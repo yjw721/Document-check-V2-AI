@@ -1098,13 +1098,64 @@ def api_ai_memory_add_sample(payload: Dict[str, Any]):
 
 @app.post("/api/ai_memory/samples/{sid}/learn")
 def api_ai_memory_learn(sid: str):
-    """对成对样本执行本地学习（差异片段 → 词条 + 校验规则，入库前置校验）。"""
+    """对成对样本执行本地学习（差异片段 → 词条 + 校验规则）。
+
+    后台线程执行并实时写入推理过程日志（token 流 + 阶段），
+    前端通过 /api/ai_memory/samples/{sid}/learn/logs 轮询展示。
+    """
     if not _ai_create_enabled():
         return {"ok": False, "message": "AI 智能生成已关闭（后台设置总开关）",
                 "stats": {}, "data": ai_memory_payload()}
     ai = load_settings().get("ai") or {}
-    ok, msg, stats = ai_memory_learn(sid, ai)
-    return {"ok": ok, "message": msg, "stats": stats, "data": ai_memory_payload()}
+    from checkers.ai_memory import learn_logs as _mlogs
+    from checkers.ai_memory import learn_sample as _mlearn
+
+    def runner():
+        try:
+            ok, msg, stats = _mlearn(
+                sid, ai,
+                on_log=lambda stage, info: _mlog(sid, stage, str(info.get("text", ""))),
+                on_token=lambda text, kind: _mlog(sid, "token" if kind == "content" else "thinking", text),
+                auto_log=False,
+            )
+            with _TASK_LOCK:
+                st = _MLEARN_STATE.setdefault(sid, {})
+                st.update({"running": False, "done": True, "ok": ok,
+                           "message": msg, "stats": stats})
+        except Exception as exc:  # noqa: BLE001 - 后台线程兜底
+            with _TASK_LOCK:
+                st = _MLEARN_STATE.setdefault(sid, {})
+                st.update({"running": False, "done": True, "ok": False,
+                           "message": f"{type(exc).__name__}：{str(exc)[:120]}", "stats": {}})
+
+    with _TASK_LOCK:
+        _MLEARN_STATE[sid] = {"running": True, "done": False, "ok": False,
+                              "message": "", "stats": {}}
+        _MLEARN_LOGS[sid] = []
+    threading.Thread(target=runner, daemon=True).start()
+    return {"ok": True, "running": True, "message": "学习任务已启动（本地推理过程实时展示）"}
+
+
+_MLEARN_LOGS: Dict[str, List[Dict[str, Any]]] = {}
+_MLEARN_STATE: Dict[str, Dict[str, Any]] = {}
+
+
+def _mlog(sid: str, kind: str, text: str) -> None:
+    """写入学习过程日志缓冲（线程安全，带超长截断）。"""
+    with _TASK_LOCK:
+        buf = _MLEARN_LOGS.setdefault(sid, [])
+        if len(buf) >= 20000:
+            return
+        buf.append({"ts": time.strftime("%H:%M:%S"), "kind": kind, "text": text})
+
+
+@app.get("/api/ai_memory/samples/{sid}/learn/logs")
+def api_ai_memory_learn_logs(sid: str):
+    """轮询本地学习推理过程：阶段日志 + 模型 token 流 + 运行状态。"""
+    with _TASK_LOCK:
+        logs = list(_MLEARN_LOGS.get(sid, []))
+        st = dict(_MLEARN_STATE.get(sid, {"running": False, "done": False}))
+    return {"ok": True, "logs": logs, "state": st}
 
 
 @app.post("/api/ai_memory/samples/{sid}/toggle")

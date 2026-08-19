@@ -329,6 +329,30 @@ export interface DictionaryContent {
 /* ---------- 本地 AI 自学习记忆（成对样本：原始文档 + 人工修订文档） ---------- */
 export type AiMemorySampleStatus = "pending" | "learning" | "done" | "failed";
 
+export interface LearnLogEntry {
+  ts: string;
+  kind: "stage" | "token" | "thinking" | "error";
+  text: string;
+}
+
+export interface LearnLogsResp {
+  ok: boolean;
+  logs: LearnLogEntry[];
+  state: {
+    running: boolean;
+    done: boolean;
+    ok?: boolean;
+    message?: string;
+    stats?: {
+      entries: number;
+      rules: number;
+      skipped: number;
+      filtered: number;
+      standard_expression?: string;
+    };
+  };
+}
+
 export interface AiDiff {
   old: string;
   new: string;

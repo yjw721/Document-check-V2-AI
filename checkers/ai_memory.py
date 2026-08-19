@@ -27,7 +27,7 @@ import shutil
 import threading
 import time
 import uuid
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from checkers.custom_rules import (
     VALID_MODE, VALID_SCOPE as _CR_SCOPE, load_custom_rules, save_custom_rules,
@@ -52,6 +52,36 @@ SRC_META_PATH = os.path.join(MEM_DIR, "source_docs.json")
 
 _LEARN_LOCK = threading.Lock()
 _LEARN_TIMEOUT = 900.0
+
+# 推理过程日志缓冲（sid → 阶段/流式日志），用于前端实时展示本地推理过程
+_LEARN_LOGS: Dict[str, List[Dict[str, Any]]] = {}
+_LEARN_STATE: Dict[str, Dict[str, Any]] = {}
+_MAX_LEARN_LOG_ENTRIES = 20000  # 单次学习日志上限（超限截断，防止 token 流过大）
+
+
+def _learn_log_append(sid: str, kind: str, text: str) -> None:
+    buf = _LEARN_LOGS.setdefault(sid, [])
+    if len(buf) >= _MAX_LEARN_LOG_ENTRIES:
+        buf.append({"ts": time.strftime("%H:%M:%S"), "kind": "stage",
+                    "text": "（日志超长，已截断后续输出）"})
+        return
+    buf.append({"ts": time.strftime("%H:%M:%S"), "kind": kind, "text": text})
+
+
+def _learn_trim(sid: str) -> None:
+    """保留最近 20 个 sid 的日志，防止内存无限增长。"""
+    for old in list(_LEARN_LOGS.keys())[:-20]:
+        if old != sid:
+            _LEARN_LOGS.pop(old, None)
+            _LEARN_STATE.pop(old, None)
+
+
+def learn_logs(sid: str) -> Dict[str, Any]:
+    """获取指定样本的学习过程日志与运行状态（供前端轮询）。"""
+    return {
+        "logs": list(_LEARN_LOGS.get(sid, [])),
+        "state": dict(_LEARN_STATE.get(sid, {})),
+    }
 
 # 学习提示词：基于两份文档的差异片段（错误表述 → 修订后标准表述）提炼
 _LEARN_PROMPT = (
@@ -326,8 +356,13 @@ def _release_source_docs() -> None:
 # ---------------------------------------------------------------------------
 # 学习引擎（本地 Ollama，全程离线）
 # ---------------------------------------------------------------------------
-def _call_learn(ai_cfg: Dict[str, Any], diffs: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """调用本地模型基于差异片段提炼错误表述与修订后标准表述。"""
+def _call_learn(ai_cfg: Dict[str, Any], diffs: List[Dict[str, Any]],
+                on_token: Optional[Callable[[str, str], None]] = None) -> Dict[str, Any]:
+    """调用本地模型基于差异片段提炼错误表述与修订后标准表述。
+
+    on_token(text, kind)：可选流式回调（kind ∈ content / thinking），
+    经 ai_checker._call_ollama 逐 token 触发，用于前端实时展示推理过程。
+    """
     from checkers.ai_builder import _extract_json_obj
     from checkers.ai_checker import AiError, DEFAULTS, _call_ollama, resolve_local_model
 
@@ -344,7 +379,7 @@ def _call_learn(ai_cfg: Dict[str, Any], diffs: List[Dict[str, Any]]) -> Dict[str
     content = _call_ollama(cfg, [
         {"role": "system", "content": _LEARN_PROMPT},
         {"role": "user", "content": user_text},
-    ], think=False, options={"num_predict": 3000})
+    ], think=False, options={"num_predict": 3000}, on_token=on_token)
     obj = _extract_json_obj(content)
     if not isinstance(obj, dict):
         raise AiError("模型返回结果不是合法 JSON 对象")
@@ -470,8 +505,48 @@ def _merge_to_groups(entries: List[Dict[str, Any]], rules: List[Dict[str, Any]],
     return learned, skipped, filtered
 
 
-def learn_sample(sid: str, ai_cfg: Dict[str, Any]) -> Tuple[bool, str, Dict[str, Any]]:
-    """对指定成对样本执行一次本地学习（差异片段 → 词条 + 校验规则）。"""
+def learn_sample(sid: str, ai_cfg: Dict[str, Any],
+                 on_log: Optional[Callable[[str, Dict[str, Any]], None]] = None,
+                 on_token: Optional[Callable[[str, str], None]] = None,
+                 auto_log: bool = True) -> Tuple[bool, str, Dict[str, Any]]:
+    """对指定成对样本执行一次本地学习（差异片段 → 词条 + 校验规则）。
+
+    on_log(stage, info)：阶段回调；on_token(text, kind)：推理 token 流回调。
+    auto_log=True 时将阶段日志与 token 流写入内部缓冲（learn_logs 查询），
+    供前端轮询实时展示本地推理过程。
+    """
+    start_ts = time.time()
+    _learn_trim(sid)
+
+    def log(stage: str, info: Dict[str, Any]) -> None:
+        if on_log:
+            try:
+                on_log(stage, info)
+            except Exception:  # noqa: BLE001 - 回调异常不影响学习
+                pass
+        if auto_log:
+            txt = info.get("text", "")
+            if stage == "token":
+                _learn_log_append(sid, "token", txt)
+            elif stage == "thinking":
+                _learn_log_append(sid, "thinking", txt)
+            elif stage == "error":
+                _learn_log_append(sid, "error", txt)
+            else:
+                _learn_log_append(sid, "stage", f"[{stage}] {txt}")
+
+    def tok(text: str, kind: str) -> None:
+        if on_token:
+            try:
+                on_token(text, kind)
+            except Exception:  # noqa: BLE001
+                pass
+        if auto_log:
+            if kind == "thinking":
+                log("thinking", {"text": text})
+            else:
+                log("token", {"text": text})
+
     with _LEARN_LOCK:
         data = load_samples()
         sample = next((s for s in data.get("samples", []) if s.get("id") == sid), None)
@@ -488,19 +563,34 @@ def learn_sample(sid: str, ai_cfg: Dict[str, Any]) -> Tuple[bool, str, Dict[str,
         sample["status"] = "learning"
         sample["error"] = ""
         save_samples(data)
+        log("start", {"text": f"开始学习样本「{sample.get('note') or sample.get('source_doc') or sid}」"
+                            f"（{len(diffs)} 个差异片段）"})
 
         try:
-            obj = _call_learn(ai_cfg, diffs)
+            from checkers.ai_checker import resolve_local_model, DEFAULTS
+            _cfg = {**DEFAULTS, **{k: v for k, v in (ai_cfg or {}).items()}}
+            _model, _sync = resolve_local_model(_cfg)
+            if _sync:
+                _model = _model
+            log("prompt", {"text": f"构建推理提示：本地模型 {_model}（离线），"
+                                  f"样本差异 {len(diffs)} 条，取前 {min(10, len(diffs))} 条推理"})
+
+            log("infer", {"text": "本地模型推理中…（流式输出，CPU 推理较慢请耐心等待）"})
+            obj = _call_learn(ai_cfg, diffs, on_token=tok)
             entries = _norm_corrections(obj.get("corrections"))
             rules = _norm_rules(obj.get("rules"))
             if not entries and not rules:
                 # 本地 CPU 推理偶发输出截断/重复：自动重试一次
-                obj = _call_learn(ai_cfg, diffs)
+                log("infer", {"text": "首次输出未提炼出可用内容，自动重试一次…"})
+                obj = _call_learn(ai_cfg, diffs, on_token=tok)
                 entries = _norm_corrections(obj.get("corrections"))
                 rules = _norm_rules(obj.get("rules"))
             if not entries and not rules:
                 raise ValueError("模型未提炼出可用内容（差异片段过于简单或表述不规范）")
+            log("parse", {"text": f"模型产出解析完成：词条 {len(entries)} 条、校验规则 {len(rules)} 条"})
             learned, skipped, filtered = _merge_to_groups(entries, rules, sid)
+            log("validate", {"text": f"入库前置校验：词条/规则合计 {len(entries) + len(rules)} 条，"
+                                    f"过滤无效 {filtered} 条、与库内重复跳过 {skipped} 条"})
             if not learned:
                 return False, "提炼内容与已有学习成果重复，未新增", {}
             standard = str(obj.get("standard_expression") or "").strip()[:300]
@@ -516,11 +606,14 @@ def learn_sample(sid: str, ai_cfg: Dict[str, Any]) -> Tuple[bool, str, Dict[str,
                      "rules": sum(1 for l in learned if l["kind"] == "rule"),
                      "standard_expression": standard, "skipped": skipped,
                      "filtered": filtered}
+            log("done", {"text": f"学习完成：产出词条 {stats['entries']} 条、规则 {stats['rules']} 条，"
+                                f"耗时 {time.time() - start_ts:.1f}s，已并入自定义词库/自定义规则"})
             return True, "学习完成", stats
         except Exception as exc:  # noqa: BLE001 - 学习失败不中断
             sample["status"] = "failed"
             sample["error"] = _friendly_ai_error(exc)
             save_samples(data)
+            log("error", {"text": f"学习失败：{sample['error']}（耗时 {time.time() - start_ts:.1f}s）"})
             return False, sample["error"], {}
 
 

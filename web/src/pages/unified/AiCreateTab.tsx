@@ -1,4 +1,4 @@
-﻿import { useEffect, useRef, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState } from "react";
 import HoloCard from "../../components/ui/HoloCard";
 import HoloButton from "../../components/ui/HoloButton";
 import HoloSwitch from "../../components/ui/HoloSwitch";
@@ -19,6 +19,7 @@ import type {
   CustomRulesData,
   WordbanksData,
   RuleFilterStat,
+  LearnLogsResp,
 } from "../../lib/types";
 import { useToast } from "../../components/ui/Toast";
 import { SEV_LABEL } from "../../lib/constants";
@@ -64,6 +65,14 @@ export default function AiCreateTab() {
   const [pairs, setPairs] = useState<AiDiff[] | null>(null);
   const [pairMsg, setPairMsg] = useState("");
   const [learning, setLearning] = useState<string | null>(null);
+  const [learnLogs, setLearnLogs] = useState<LearnLogsResp | null>(null);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
   const [exporting, setExporting] = useState<"wordbanks-csv" | "wordbanks-txt" | "rules-csv" | "rules-txt" | null>(null);
 
   const loadMem = () => {
@@ -272,18 +281,40 @@ export default function AiCreateTab() {
   const learn = async (s: AiMemorySample) => {
     if (learning) return;
     setLearning(s.id);
+    setLearnLogs({ ok: true, logs: [], state: { running: true, done: false } });
     try {
       const r = await api.aiMemoryLearn(s.id);
-      if (r.ok) {
-        const st = r.stats || {};
-        const flt = st.filtered ?? 0;
-        toast(flt > 0
-          ? `本次学习生成 ${st.entries ?? 0} 条词库、${st.rules ?? 0} 条规则，后端过滤无效 ${flt} 条`
-          : `本次学习生成 ${st.entries ?? 0} 条词库、${st.rules ?? 0} 条规则`);
-      } else {
+      if (!r.ok) {
         toast(r.message || "学习失败", "err");
+        loadMem();
+        return;
       }
-      loadMem();
+      toast("学习任务已启动，本地推理过程实时展示中…");
+      while (mountedRef.current) {
+        let l: LearnLogsResp;
+        try {
+          l = await api.aiMemoryLearnLogs(s.id);
+        } catch {
+          break;
+        }
+        setLearnLogs(l);
+        if (l.state.done || !l.state.running) {
+          if (l.state.ok) {
+            const st: { entries?: number; rules?: number; filtered?: number; skipped?: number } =
+              l.state.stats || {};
+            toast(
+              st.filtered
+                ? `学习完成：产出词条 ${st.entries ?? 0} 条、规则 ${st.rules ?? 0} 条，后端过滤无效 ${st.filtered} 条`
+                : `学习完成：产出词条 ${st.entries ?? 0} 条、规则 ${st.rules ?? 0} 条`,
+            );
+          } else {
+            toast(l.state.message || "学习失败", "err");
+          }
+          loadMem();
+          break;
+        }
+        await new Promise((res) => setTimeout(res, 800));
+      }
     } catch (e) {
       toast((e as Error).message, "err");
     } finally {
@@ -499,6 +530,7 @@ export default function AiCreateTab() {
           pairs={pairs}
           pairMsg={pairMsg}
           learning={learning}
+          learnLogs={learnLogs}
           exporting={exporting}
           sampleStatus={sampleStatus}
           onToggle={toggleEnabled}
@@ -552,6 +584,7 @@ interface LearningProps {
   pairs: AiDiff[] | null;
   pairMsg: string;
   learning: string | null;
+  learnLogs: LearnLogsResp | null;
   exporting: string | null;
   sampleStatus: Record<string, { tone: "gray" | "ok" | "warn" | "danger"; label: string }>;
   onToggle: () => void;
@@ -777,6 +810,11 @@ function LearningSection(p: LearningProps) {
         )}
       </HoloCard>
 
+      {/* 本地推理过程（流式实时展示） */}
+      {p.learnLogs && (p.learnLogs.logs.length > 0 || p.learning !== null) && (
+        <LearnProcessPanel learnLogs={p.learnLogs} />
+      )}
+
       {/* 学习产出（词库条目 + 校验规则，可导出备份） */}
       <HoloCard className="overflow-hidden p-0" glow="sm">
         <div className="px-6 pt-5">
@@ -858,5 +896,128 @@ function LearningSection(p: LearningProps) {
         )}
       </HoloCard>
     </div>
+  );
+}
+
+/* ---------- 本地 AI 推理过程面板：阶段流 + 思考链折叠 + 流式输出 ---------- */
+const STAGE_SEQ: { key: string; label: string; icon: string }[] = [
+  { key: "start", label: "加载样本", icon: "📂" },
+  { key: "prompt", label: "构建提示", icon: "📨" },
+  { key: "infer", label: "本地推理", icon: "🧠" },
+  { key: "parse", label: "解析产出", icon: "📋" },
+  { key: "validate", label: "入库校验", icon: "🛡️" },
+  { key: "done", label: "完成", icon: "✅" },
+];
+
+function LearnProcessPanel({ learnLogs }: { learnLogs: LearnLogsResp }) {
+  const viewRef = useRef<HTMLDivElement>(null);
+  const logs = learnLogs.logs;
+  const st = learnLogs.state;
+
+  const stages = useMemo(() => {
+    const seen = new Set(logs.filter((l) => l.kind === "stage").map((l) => l.text.match(/^\[(\w+)\]/)?.[1] ?? ""));
+    return STAGE_SEQ.map((s) => {
+      let active = false;
+      let done = false;
+      if (s.key === "done") {
+        done = st.done;
+        active = false;
+      } else {
+        const hit = seen.has(s.key);
+        done = hit;
+        active = !done && (st.running || !st.done);
+      }
+      return { ...s, done, active };
+    });
+  }, [logs, st]);
+
+  const thinking = useMemo(() => logs.filter((l) => l.kind === "thinking").map((l) => l.text).join(""), [logs]);
+  const output = useMemo(() => logs.filter((l) => l.kind === "token").map((l) => l.text).join(""), [logs]);
+  const errLog = useMemo(() => logs.find((l) => l.kind === "error")?.text, [logs]);
+
+  useEffect(() => {
+    const el = viewRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [thinking, output, errLog]);
+
+  const runTone = st.done ? (st.ok ? "ok" : "danger") : "warn";
+  const runLabel = st.done ? (st.ok ? "推理完成" : "推理失败") : "推理中…（流式输出）";
+
+  return (
+    <HoloCard className="overflow-hidden p-0" glow="sm">
+      <div className="flex flex-wrap items-center gap-2 px-6 pt-5">
+        <SectionTitle className="!mb-0">本地模型推理过程</SectionTitle>
+        <HoloBadge tone={runTone}>{runLabel}</HoloBadge>
+        {st.done && st.ok && (
+          <span className="text-[11px] text-[var(--tone-cyan)]">
+            产出词条 {st.stats?.entries ?? 0} 条 · 规则 {st.stats?.rules ?? 0} 条
+            {st.stats?.filtered ? ` · 过滤无效 ${st.stats.filtered} 条` : ""}
+            {st.stats?.skipped ? ` · 库内重复跳过 ${st.stats.skipped} 条` : ""}
+          </span>
+        )}
+        <span className="ml-auto text-[11px] text-white/35">全程离线 · 数据不出本机</span>
+      </div>
+
+      <div className="p-6 pt-4">
+        {/* 阶段流 */}
+        <div className="flex flex-wrap items-center gap-1.5">
+          {stages.map((s, i) => (
+            <div key={s.key} className="flex items-center gap-1.5">
+              <span
+                className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-all duration-500 ${
+                  s.done
+                    ? "border-[rgba(70,211,154,0.35)] bg-[rgba(70,211,154,0.12)] text-[var(--tone-ok)]"
+                    : s.active
+                      ? "border-[rgba(79,214,201,0.4)] bg-[rgba(79,214,201,0.1)] text-[var(--tone-cyan)] shadow-[0_0_12px_var(--glow-btn)]"
+                      : "border-white/10 bg-white/[0.03] text-white/35"
+                }`}
+              >
+                <span>{s.done ? "✓" : s.active ? "⏳" : s.icon}</span>
+                {s.label}
+              </span>
+              {i < stages.length - 1 && <span className="text-[10px] text-white/25">▸</span>}
+            </div>
+          ))}
+        </div>
+
+        {/* 推理输出 */}
+        {(thinking || output || errLog) && (
+          <div className="mt-4 space-y-3">
+            {thinking && (
+              <details className="group rounded-2xl border border-white/10 bg-white/[0.03]">
+                <summary className="cursor-pointer select-none px-4 py-2.5 text-xs text-white/55 transition-colors hover:text-white/85">
+                  🧠 模型思考链（{thinking.length} 字）{st.running ? "· 生成中…" : ""}
+                </summary>
+                <div className="max-h-52 overflow-y-auto border-t border-white/[0.07] px-4 py-3 font-mono text-[12px] leading-relaxed whitespace-pre-wrap text-white/65">
+                  {thinking}
+                </div>
+              </details>
+            )}
+            <div
+              ref={viewRef}
+              className="max-h-80 overflow-y-auto rounded-2xl border border-[var(--border-accent-soft)] bg-[rgba(10,10,31,0.6)] px-4 py-3 font-mono text-[12px] leading-relaxed whitespace-pre-wrap text-cyan-100/85"
+            >
+              {output || (errLog ? <span className="text-[var(--tone-danger)]">{errLog}</span> : "等待模型输出…")}
+              {st.running && <span className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse rounded-sm bg-[var(--tone-cyan)] align-middle" />}
+            </div>
+          </div>
+        )}
+
+        {/* 阶段日志摘要 */}
+        {logs.length > 0 && (
+          <div className="mt-3 space-y-1">
+            {logs
+              .filter((l) => l.kind === "stage" || l.kind === "error")
+              .slice(-6)
+              .map((l, i) => (
+                <div key={i} className="flex items-start gap-2 text-[11px]">
+                  <span className="shrink-0 text-white/30">{l.ts}</span>
+                  <span className={l.kind === "error" ? "text-[var(--tone-danger)]" : "text-white/60"}>{l.text}</span>
+                </div>
+              ))}
+          </div>
+        )}
+      </div>
+    </HoloCard>
   );
 }
