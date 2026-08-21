@@ -21,6 +21,7 @@ AI 智能核验引擎（可选模块，默认关闭）
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -31,6 +32,7 @@ import urllib.request
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from checkers.base import Issue, clip
+from checkers import ai_activity
 
 # 参考资料目录（用户上传的标准/词汇/规范文件，AI 核验时自动携带）
 REFS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -44,6 +46,103 @@ AI_RULE_TITLE = "AI 智能核验"
 
 # 全局信号量：本地/在线模型并发上限（本地模型串行最稳，避免排队打爆）
 _AI_SEM = threading.Semaphore(1)
+_AI_SEM_SIZE = [1]
+
+
+def _ai_sem(ai: Dict[str, Any]) -> threading.Semaphore:
+    """按 rate_limit.concurrency 动态调整并发信号量（≥1）。"""
+    global _AI_SEM, _AI_SEM_SIZE
+    rl = ai.get("rate_limit") or {}
+    c = max(1, int(rl.get("concurrency") or 1))
+    if c != _AI_SEM_SIZE[0]:
+        _AI_SEM = threading.Semaphore(c)
+        _AI_SEM_SIZE[0] = c
+    return _AI_SEM
+
+
+# 限流：按 rate_limit.rpm 粗略节流（相邻调用最小间隔 = 60/rpm 秒）
+_LAST_CALL = [0.0]
+_RPM_LOCK = threading.Lock()
+
+
+def _ai_throttle(ai: Dict[str, Any]) -> None:
+    rl = ai.get("rate_limit") or {}
+    if not rl.get("enabled"):
+        return
+    rpm = int(rl.get("rpm") or 0)
+    if rpm <= 0:
+        return
+    gap = 60.0 / rpm
+    with _RPM_LOCK:
+        now = time.time()
+        wait = gap - (now - _LAST_CALL[0])
+        if wait > 0:
+            time.sleep(min(wait, gap))
+        _LAST_CALL[0] = time.time()
+
+
+# 响应缓存（内存）：相同 mode+model+prompt 命中后直接返回，受 cache.ttl / max_entries 约束
+_AI_CACHE: Dict[str, Any] = {}
+_AI_CACHE_TS: Dict[str, float] = {}
+_AI_CACHE_LOCK = threading.Lock()
+
+
+def _cache_key(mode: str, model: str, prompt: str) -> str:
+    return hashlib.sha256(f"{mode}|{model}|{prompt}".encode("utf-8")).hexdigest()
+
+
+def _cache_get(key: str, ttl: int) -> Optional[str]:
+    with _AI_CACHE_LOCK:
+        if key in _AI_CACHE:
+            if time.time() - _AI_CACHE_TS[key] <= ttl:
+                return _AI_CACHE[key]
+            _AI_CACHE.pop(key, None)
+            _AI_CACHE_TS.pop(key, None)
+    return None
+
+
+def _cache_put(key: str, val: str, max_entries: int) -> None:
+    with _AI_CACHE_LOCK:
+        if len(_AI_CACHE) >= max_entries:
+            try:
+                oldest = min(_AI_CACHE_TS, key=_AI_CACHE_TS.get)
+                _AI_CACHE.pop(oldest, None)
+                _AI_CACHE_TS.pop(oldest, None)
+            except (ValueError, TypeError):
+                pass
+        _AI_CACHE[key] = val
+        _AI_CACHE_TS[key] = time.time()
+
+
+# 响应风格 → 系统指令
+_STYLE_INSTR: Dict[str, str] = {
+    "precise": "回答务必严谨、准确，避免主观推测。",
+    "concise": "回答尽量简洁，直击要点，减少冗余。",
+    "balance": "在严谨与易读之间保持平衡。",
+    "friendly": "语气友好、平易近人，便于理解。",
+    "formal": "使用正式、专业的书面语。",
+}
+
+
+def compose_system(ai: Dict[str, Any], base: str) -> str:
+    """将 AI 角色 / 响应风格 / 默认提示词预设组合到基础系统提示之前。"""
+    parts: List[str] = []
+    role = (ai.get("role") or "").strip()
+    if role:
+        parts.append(f"你的角色：{role}。")
+    style = ai.get("response_style") or "balance"
+    if style in _STYLE_INSTR:
+        parts.append(_STYLE_INSTR[style])
+    preset_id = ai.get("active_preset") or ""
+    presets = ai.get("prompt_presets") or []
+    if preset_id and isinstance(presets, list):
+        p = next((x for x in presets if isinstance(x, dict) and x.get("id") == preset_id), None)
+        if p and p.get("content"):
+            parts.append(str(p["content"]))
+    if parts:
+        return "【通用设定】" + " ".join(parts) + "\n\n" + base
+    return base
+
 
 # 默认配置（与 settings 中 ai 组一致；缺省时使用）
 DEFAULTS: Dict[str, Any] = {
@@ -180,8 +279,22 @@ def _call_ollama(cfg: Dict[str, Any], messages: List[Dict[str, str]],
     }
     if think is not None:
         payload["think"] = think
-    if options:
-        payload["options"] = options
+    # 透传上下文长度 / 温度等 Ollama options（与调用方传入的 options 合并）
+    opts: Dict[str, Any] = dict(options or {})
+    nc = cfg.get("num_ctx")
+    if nc:
+        try:
+            opts["num_ctx"] = int(nc)
+        except (TypeError, ValueError):
+            pass
+    tp = cfg.get("temperature")
+    if tp not in (None, ""):
+        try:
+            opts["temperature"] = float(tp)
+        except (TypeError, ValueError):
+            pass
+    if opts:
+        payload["options"] = opts
     if on_token:
         return _call_ollama_stream(url, payload, on_token,
                                    float(cfg.get("timeout") or DEFAULTS["timeout"]))
@@ -250,7 +363,7 @@ def _call_openai(cfg: Dict[str, Any], messages: List[Dict[str, str]]) -> str:
         "model": cfg.get("model") or "deepseek-chat",
         "messages": messages,
         "stream": False,
-        "temperature": 0.2,
+        "temperature": float(cfg.get("temperature") if cfg.get("temperature") not in (None, "") else 0.2),
     }, headers, float(cfg.get("timeout") or DEFAULTS["timeout"]))
     try:
         return resp["choices"][0]["message"]["content"]
@@ -631,10 +744,26 @@ def ai_check_file(path: str, ftype: str, issues_out: List[Issue],
             except Exception:  # noqa: BLE001 - 回调异常不影响核验
                 pass
         try:
-            with _AI_SEM:
-                content = _call_ollama(ai, _messages(text, ref_text),
-                                       on_token=on_token) if mode == "local" \
-                    else _call_openai(ai, _messages(text, ref_text))
+            msgs = _messages(ai, text, ref_text)
+            cache_cfg = ai.get("cache") or {}
+            ckey = None
+            if cache_cfg.get("enabled") and on_token is None:
+                ckey = _cache_key(mode, str(ai.get("model", "")),
+                                  json.dumps(msgs, ensure_ascii=False))
+                cached = _cache_get(ckey, int(cache_cfg.get("ttl") or 3600))
+                if cached is not None:
+                    content = cached
+                else:
+                    with _ai_sem(ai):
+                        _ai_throttle(ai)
+                        content = _call_ollama(ai, msgs, on_token=on_token) if mode == "local" \
+                            else _call_openai(ai, msgs)
+                    _cache_put(ckey, content, int(cache_cfg.get("max_entries") or 200))
+            else:
+                with _ai_sem(ai):
+                    _ai_throttle(ai)
+                    content = _call_ollama(ai, msgs, on_token=on_token) if mode == "local" \
+                        else _call_openai(ai, msgs)
             items = _parse_issues(content, text)
         except AiError as exc:
             fail_reasons.append(f"{loc}：{exc}")
@@ -660,14 +789,20 @@ def ai_check_file(path: str, ftype: str, issues_out: List[Issue],
             added += 1
 
     if fail_reasons and added == 0:
+        ai_activity.log_event("verify", model=str(ai.get("model", "")),
+                             detail="执行失败：" + "；".join(fail_reasons[:2]), ok=False)
         return 0, "AI 核验执行失败：" + "；".join(fail_reasons[:2])
     if fail_reasons:
+        ai_activity.log_event("verify", model=str(ai.get("model", "")),
+                             detail=f"部分分段失败，已命中 {added} 条", ok=True)
         return added, "部分分段失败：" + "；".join(fail_reasons[:2])
+    ai_activity.log_event("verify", model=str(ai.get("model", "")),
+                         detail=f"核验通过，命中 {added} 条问题", ok=True)
     return added, ("完成" + (f"（{sync_note}）" if sync_note else ""))
 
 
-def _messages(text: str, ref_text: str = "") -> List[Dict[str, str]]:
-    msgs = [{"role": "system", "content": _SYS_PROMPT}]
+def _messages(ai: Dict[str, Any], text: str, ref_text: str = "") -> List[Dict[str, str]]:
+    msgs = [{"role": "system", "content": compose_system(ai, _SYS_PROMPT)}]
     if ref_text:
         msgs.append({
             "role": "system",
@@ -703,6 +838,8 @@ def test_connection(ai: Dict[str, Any]) -> Tuple[bool, str]:
             else "连接成功但模型未返回内容"
         if sync_note:
             msg += f"；{sync_note}"
+        ai_activity.log_event("test", model=str(cfg.get("model", "")), detail=msg, ok=ok)
         return ok, msg
     except AiError as exc:
+        ai_activity.log_event("test", model=str(cfg.get("model", "")), detail=str(exc), ok=False)
         return False, str(exc)

@@ -6,9 +6,11 @@ interface SidebarProps {
   onToggle: () => void;
   active: string;
   onNavigate: (key: string) => void;
+  hiddenNav?: string[];
 }
 
-export default function Sidebar({ collapsed, onToggle, active, onNavigate }: SidebarProps) {
+export default function Sidebar({ collapsed, onToggle, active, onNavigate, hiddenNav }: SidebarProps) {
+  const items = NAV.filter((n) => !(hiddenNav ?? []).includes(n.key));
   return (
     <aside
       className={`flex h-full shrink-0 flex-col border-r border-white/10 bg-white/5 backdrop-blur-2xl transition-all duration-500 ${
@@ -30,7 +32,7 @@ export default function Sidebar({ collapsed, onToggle, active, onNavigate }: Sid
 
       {/* 导航 */}
       <nav className="flex flex-1 flex-col gap-1 overflow-y-auto p-3">
-        {NAV.map((n) => {
+        {items.map((n) => {
           const isActive = active === n.key;
           return (
             <button

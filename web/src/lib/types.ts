@@ -258,6 +258,7 @@ export interface SettingsData {
   report?: ReportSettings;
   log_cache?: LogCacheSettings;
   ai?: AiSettings;
+  role?: "admin" | "user";
   [k: string]: unknown;
 }
 
@@ -274,6 +275,37 @@ export interface AiSettings {
   ref_enabled?: boolean;
   ref_max_chars?: number;
   create_enabled?: boolean;
+  /* —— AI 配置模块新增参数 —— */
+  temperature?: number;
+  num_ctx?: number;
+  role?: string;
+  response_style?: "precise" | "concise" | "balance" | "friendly" | "formal" | string;
+  prompt_presets?: AiPromptPreset[];
+  active_preset?: string;
+  rate_limit?: AiRateLimit;
+  cache?: AiCacheConfig;
+}
+
+/* ---------- AI 自定义提示词预设 ---------- */
+export interface AiPromptPreset {
+  id: string;
+  name: string;
+  content: string;
+  scope?: "verify" | "build" | "all" | string;
+}
+
+/* ---------- AI 限流参数 ---------- */
+export interface AiRateLimit {
+  enabled?: boolean;
+  rpm?: number;
+  concurrency?: number;
+}
+
+/* ---------- AI 响应缓存配置 ---------- */
+export interface AiCacheConfig {
+  enabled?: boolean;
+  ttl?: number;
+  max_entries?: number;
 }
 
 /* ---------- AI 参考资料（标准/词汇/规范） ---------- */
@@ -282,6 +314,16 @@ export interface AiRef {
   chars: number;
   enabled: boolean;
   updated: string;
+}
+
+/* ---------- AI 活动日志 ---------- */
+export interface AiActivityLog {
+  ts: string;
+  event: "verify" | "build_dialogue" | "build_text" | "build_doc" | "test" | "learn" | string;
+  model: string;
+  ok: boolean;
+  detail: string;
+  [k: string]: unknown;
 }
 
 /* ---------- AI 规则/词库生成（对话式 + 文档自建） ---------- */

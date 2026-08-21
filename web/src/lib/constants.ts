@@ -6,6 +6,7 @@ export const NAV = [
   { key: "overview", name: "总览面板", ic: "📊" },
   { key: "detection", name: "检测管理", ic: "🔍" },
   { key: "unified", name: "规则与词库统一管理", ic: "🗄️" },
+  { key: "aiconfig", name: "AI 配置", ic: "⚙️" },
   { key: "admin", name: "后台设置", ic: "🛡️" },
   { key: "settings", name: "缓存与系统", ic: "🗂️" },
 ] as const;

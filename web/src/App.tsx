@@ -5,6 +5,7 @@ import DetectionPage from "./pages/DetectionPage";
 import UnifiedPage from "./pages/UnifiedPage";
 import AdminPage from "./pages/AdminPage";
 import SettingsPage from "./pages/SettingsPage";
+import AiConfigPage from "./pages/AiConfigPage";
 import { ToastProvider } from "./components/ui/Toast";
 import { OverlayProvider } from "./lib/ui";
 import { DET_TABS, NAV, UNI_TABS } from "./lib/constants";
@@ -61,8 +62,11 @@ function App() {
     localStorage.getItem("docchk_theme") === "light" ? "light" : "dark",
   );
   const [counts, setCounts] = useState<{ files: number; issues: number }>({ files: 0, issues: 0 });
+  const [role, setRole] = useState<"admin" | "user">("admin");
 
   const { view, detTab, uniTab } = useMemo(() => parseHash(hash), [hash]);
+  /* 普通用户不可见 / 不可进入「AI 配置」后台模块 */
+  const effView = view === "aiconfig" && role !== "admin" ? "overview" : view;
 
   /* 哈希变化监听 */
   useEffect(() => {
@@ -81,7 +85,10 @@ function App() {
   useEffect(() => {
     api
       .settings()
-      .then((s) => applyTheme(s.ui?.theme_scheme, s.ui?.accent_color))
+      .then((s) => {
+        applyTheme(s.ui?.theme_scheme, s.ui?.accent_color);
+        setRole(s.role === "user" ? "user" : "admin");
+      })
       .catch(() => applyTheme("holographic", ""));
   }, []);
 
@@ -110,14 +117,16 @@ function App() {
   }, []);
 
   /* 标题 / 面包屑 */
-  const navItem = NAV.find((n) => n.key === view) ?? NAV[0];
+  const navItem = NAV.find((n) => n.key === effView) ?? NAV[0];
   const title = navItem.name;
   const crumb =
-    view === "detection"
+    effView === "detection"
       ? (DET_TABS.find((t) => t.key === detTab) ?? DET_TABS[0]).name
-      : view === "unified"
+      : effView === "unified"
         ? (UNI_TABS.find((t) => t.key === uniTab) ?? UNI_TABS[0]).name
-        : "本地离线 · 零联网";
+        : effView === "aiconfig"
+          ? "后台管理 · AI 配置"
+          : "本地离线 · 零联网";
 
   return (
     <ToastProvider>
@@ -125,7 +134,7 @@ function App() {
         <AppLayout
           collapsed={collapsed}
           onToggle={toggleSide}
-          active={view}
+          active={effView}
           onNavigate={navigate}
           title={title}
           crumb={crumb}
@@ -133,12 +142,14 @@ function App() {
           issueCount={counts.issues}
           theme={theme}
           onToggleTheme={toggleTheme}
+          hiddenNav={role !== "admin" ? ["aiconfig"] : []}
         >
-          {view === "overview" && <OverviewPage />}
-          {view === "detection" && <DetectionPage tab={detTab} onTab={(t) => (window.location.hash = `#detection/${t}`)} />}
-          {view === "unified" && <UnifiedPage tab={uniTab} onTab={(t) => (window.location.hash = `#unified/${t}`)} />}
-          {view === "admin" && <AdminPage />}
-          {view === "settings" && <SettingsPage />}
+          {effView === "overview" && <OverviewPage />}
+          {effView === "detection" && <DetectionPage tab={detTab} onTab={(t) => (window.location.hash = `#detection/${t}`)} />}
+          {effView === "unified" && <UnifiedPage tab={uniTab} onTab={(t) => (window.location.hash = `#unified/${t}`)} />}
+          {effView === "aiconfig" && <AiConfigPage />}
+          {effView === "admin" && <AdminPage />}
+          {effView === "settings" && <SettingsPage />}
         </AppLayout>
       </OverlayProvider>
     </ToastProvider>

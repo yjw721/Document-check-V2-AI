@@ -13,6 +13,7 @@ interface AppLayoutProps {
   issueCount?: number;
   theme: "dark" | "light";
   onToggleTheme: () => void;
+  hiddenNav?: string[];
   children: ReactNode;
 }
 
@@ -27,11 +28,12 @@ export default function AppLayout({
   issueCount,
   theme,
   onToggleTheme,
+  hiddenNav,
   children,
 }: AppLayoutProps) {
   return (
     <div className="holo-space flex h-full">
-      <Sidebar collapsed={collapsed} onToggle={onToggle} active={active} onNavigate={onNavigate} />
+      <Sidebar collapsed={collapsed} onToggle={onToggle} active={active} onNavigate={onNavigate} hiddenNav={hiddenNav} />
       <main className="relative z-[1] flex min-w-0 flex-1 flex-col">
         <header className="sticky top-0 z-10 flex h-16 shrink-0 items-center gap-4 border-b border-white/10 bg-[var(--header-bg)] px-6 backdrop-blur-xl">
           <div className="min-w-0">

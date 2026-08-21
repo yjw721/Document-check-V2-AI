@@ -97,11 +97,29 @@ DEFAULTS: Dict[str, Any] = {
         "ref_enabled": True,                   # 核验时携带参考资料（标准/词汇/规范）
         "ref_max_chars": 2000,                 # 参考文本携带上限（字符数，超出截断）
         "create_enabled": True,                # 本地AI智能生成&自学习 全局总开关（规则词库智能生成统一模块）
+        # —— 以下为「AI 配置」模块新增参数 ——
+        "temperature": 0.7,                    # 生成温度（0 严谨确定 ~ 1 发散）
+        "num_ctx": 4096,                       # 模型上下文长度（Ollama num_ctx）
+        "role": "",                            # AI 角色设定（system 前缀，如「资深资产评估师」）
+        "response_style": "balance",           # 响应风格：precise 严谨 / concise 简洁 / balance 均衡 / friendly 友好 / formal 正式
+        "prompt_presets": [],                  # 自定义提示词预设 [{id,name,content,scope}]
+        "active_preset": "",                   # 默认应用于 AI 核验的预设 id（空=不套用）
+        "rate_limit": {                        # 限流参数
+            "enabled": False,
+            "rpm": 20,                         # 每分钟最大请求数（粗略节流）
+            "concurrency": 1,                  # 并发调用上限（本地模型建议 1）
+        },
+        "cache": {                             # 响应缓存配置
+            "enabled": False,
+            "ttl": 3600,                       # 缓存有效期（秒）
+            "max_entries": 200,                # 最大缓存条目
+        },
     },
     "log_cache": {
         "cache_expire_days": 7,
         "run_log": False,
     },
+    "role": "admin",                           # 当前应用角色：admin 管理员（可见 AI 配置等后台模块）/ user 普通用户
 }
 
 

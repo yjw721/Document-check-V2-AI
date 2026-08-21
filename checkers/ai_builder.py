@@ -20,8 +20,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from checkers.ai_checker import (
     AiError, DEFAULTS as _AI_DEFAULTS, _call_ollama, _call_openai,
-    _extract_ref_text, clip, resolve_local_model,
+    _extract_ref_text, clip, resolve_local_model, compose_system,
 )
+from checkers import ai_activity
 
 # 生成结果里单次最多条目数（防止模型产出过多/过少）
 MAX_ENTRIES = 40
@@ -265,6 +266,7 @@ def _gen(ai: Dict[str, Any], sys_prompt: str, user_text: str,
     _retry=True：空结果的第二次尝试（首轮通常因思考耗尽输出额度被截断）。
     """
     cfg = {**_AI_DEFAULTS, **(ai or {})}
+    sys_prompt = compose_system(cfg, sys_prompt)
     # 生成为低频重任务：qwen3 系本地模型的思考链无法硬禁（模板层强制），
     # 思考会占用大量 token 预算，必须把 num_predict 抬高到足以容纳
     # 思考 + JSON 输出，否则 JSON 被截断导致解析失败（表现为“生成无效”）。
@@ -413,6 +415,13 @@ def run_build(kind: str, *, text: str = "", raw: bytes = b"", filename: str = ""
     if ok:
         log("parse", {"text": f"模型产出解析完成：词库 {len(result.get('wordbanks', []))} 组、"
                               f"规则 {len(result.get('rules', []))} 条（耗时 {time.time() - start_ts:.1f}s）"})
+        ai_activity.log_event(
+            "build_" + kind, model=str(cfg.get("model", "")),
+            detail=f"生成成功：词库 {len(result.get('wordbanks', []))} 组、"
+                   f"规则 {len(result.get('rules', []))} 条",
+            ok=True,
+        )
     else:
         log("error", {"text": f"生成失败：{msg}"})
+        ai_activity.log_event("build_" + kind, model=str(cfg.get("model", "")), detail=msg, ok=False)
     return ok, msg, result

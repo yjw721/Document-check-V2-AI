@@ -38,6 +38,7 @@ from checkers.ai_checker import (
     ai_check_file, test_connection as ai_test_connection,
     list_refs, save_ref, delete_ref, set_ref_enabled,
 )
+from checkers import ai_activity
 from checkers.ai_builder import (
     build_dialogue as ai_build_dialogue, build_from_doc as ai_build_doc,
     build_from_text as ai_build_text,
@@ -1012,6 +1013,19 @@ def api_ai_refs_delete(payload: Dict[str, Any]):
     name = str(payload.get("name") or "")
     existed = delete_ref(name)
     return {"ok": existed, "refs": list_refs()}
+
+
+@app.get("/api/ai/logs")
+def api_ai_logs(limit: int = 200, offset: int = 0):
+    """AI 活动日志（核验 / 生成 / 测试连接 / 自学习）。"""
+    items = ai_activity.get_logs(limit=max(1, int(limit)), offset=max(0, int(offset)))
+    return {"ok": True, "logs": items, "total": len(items)}
+
+
+@app.post("/api/ai/logs/clear")
+def api_ai_logs_clear():
+    n = ai_activity.clear_logs()
+    return {"ok": True, "cleared": n}
 
 
 # --- AI 规则/词库智能生成（对话式 + 文本式 + 文档式，统一入库校验与来源标记） ---

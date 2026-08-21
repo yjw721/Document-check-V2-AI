@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import HoloCard from "../components/ui/HoloCard";
 import HoloButton from "../components/ui/HoloButton";
 import HoloModal from "../components/ui/HoloModal";
+import HoloSwitch from "../components/ui/HoloSwitch";
 import StatCard from "../components/common/StatCard";
 import SectionTitle from "../components/common/SectionTitle";
 import { api } from "../lib/api";
@@ -67,6 +68,22 @@ export default function SettingsPage() {
   const s = data?.summary;
   const statusMap: Record<string, string> = {};
   (data?.status ?? []).forEach(([k, v]) => (statusMap[k] = v));
+
+  /* 当前应用角色（管理员 / 普通用户）：控制后台模块可见性 */
+  const [role, setRoleState] = useState<"admin" | "user">("admin");
+  useEffect(() => {
+    api.settings().then((st) => setRoleState(st.role === "user" ? "user" : "admin")).catch(() => {});
+  }, []);
+  const setRole = async (r: "admin" | "user") => {
+    setRoleState(r);
+    try {
+      const cur = await api.settings();
+      await api.saveSettings({ ...cur, role: r });
+      toast(r === "user" ? "已切换为普通用户：AI 配置等后台模块已隐藏" : "已切换为管理员：后台模块可见");
+    } catch (e) {
+      toast((e as Error).message, "err");
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -134,6 +151,31 @@ export default function SettingsPage() {
           </div>
         </HoloCard>
       </div>
+
+      {/* 角色与权限 */}
+      <HoloCard className="p-6">
+        <div className="flex flex-wrap items-center gap-3">
+          <SectionTitle className="!mb-0">角色与权限</SectionTitle>
+          <span className="text-xs text-white/45">本地离线工具：角色仅用于区分后台管理可见性，不做账号校验</span>
+        </div>
+        <div className="mt-3 rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-white/90">
+                当前角色：{role === "admin" ? "管理员" : "普通用户"}
+              </div>
+              <div className="mt-0.5 text-xs text-white/50">
+                管理员可见「AI 配置」等后台模块并可修改；切换为普通用户后这些入口自动隐藏且直链不可进入。
+              </div>
+            </div>
+            <HoloSwitch
+              checked={role === "admin"}
+              onChange={(v) => setRole(v ? "admin" : "user")}
+              label={role === "admin" ? "管理员" : "普通用户"}
+            />
+          </div>
+        </div>
+      </HoloCard>
 
       {/* 确认弹窗 */}
       <HoloModal open={confirmOpen} title="确认清空检测数据？" onClose={() => setConfirmOpen(false)} width={440}>

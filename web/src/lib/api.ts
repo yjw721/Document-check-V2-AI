@@ -13,6 +13,7 @@ import type {
   LearnLogsResp,
   AiRef,
   AiSettings,
+  AiActivityLog,
   CustomRulesData,
   DictionariesData,
   DictionaryContent,
@@ -135,6 +136,14 @@ export const api = {
   aiModels: () => request<{ ok: boolean; models: string[]; message?: string }>("GET", "/api/ai/models"),
   aiTest: (body: Partial<AiSettings>) =>
     request<{ ok: boolean; message: string }>("POST", "/api/ai/test", body),
+
+  /* ---------- AI 活动日志 ---------- */
+  aiLogs: (limit = 200, offset = 0) =>
+    request<{ ok: boolean; logs: AiActivityLog[]; total: number }>(
+      "GET", `/api/ai/logs?limit=${limit}&offset=${offset}`,
+    ),
+  aiLogsClear: () =>
+    request<{ ok: boolean; cleared: number }>("POST", "/api/ai/logs/clear"),
 
   /* ---------- AI 参考资料 ---------- */
   aiRefs: () => request<{ refs: AiRef[] }>("GET", "/api/ai/refs"),
