@@ -298,7 +298,7 @@ function BasicTab({
         <HoloButton variant="ghost" onClick={testConn} disabled={testing} icon={<span>⚡</span>}>
           {testing ? "测试中…" : "测试连接"}
         </HoloButton>
-        <HoloButton variant="primary" disabled={saving} onClick={onSave}>
+        <HoloButton variant="primary" disabled={saving} onClick={() => onSave()}>
           {saving ? "保存中…" : "保存配置"}
         </HoloButton>
         <span className="text-[11px] text-white/35">本地 AI 需先安装并启动 Ollama（ollama serve）并拉取模型，零联网。</span>
@@ -371,7 +371,7 @@ function AdvancedTab({
       </div>
 
       <div className="mt-4 flex items-center gap-2.5">
-        <HoloButton variant="primary" disabled={saving} onClick={onSave}>
+        <HoloButton variant="primary" disabled={saving} onClick={() => onSave()}>
           {saving ? "保存中…" : "保存配置"}
         </HoloButton>
       </div>
@@ -454,7 +454,7 @@ function PromptTab({
       </div>
 
       <div className="mt-4 flex items-center gap-2.5">
-        <HoloButton variant="primary" disabled={saving} onClick={onSave}>
+        <HoloButton variant="primary" disabled={saving} onClick={() => onSave()}>
           {saving ? "保存中…" : "保存配置"}
         </HoloButton>
       </div>
