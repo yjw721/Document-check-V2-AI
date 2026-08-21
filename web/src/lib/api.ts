@@ -46,7 +46,8 @@ export interface ApiOptions {
 async function request<T>(method: string, path: string, body?: unknown, opts: ApiOptions = {}): Promise<T> {
   const init: RequestInit = { method, headers: {} };
   if (body !== undefined) {
-    if (opts.form) {
+    // FormData 自动按 multipart 发送（浏览器自动带 boundary，切勿手动设 JSON 头）
+    if (opts.form || body instanceof FormData) {
       init.body = body as FormData;
     } else {
       (init.headers as Record<string, string>)["Content-Type"] = "application/json";
