@@ -99,29 +99,35 @@ def resolve_local_model(cfg: Dict[str, Any]) -> Tuple[str, str]:
     return models[0], f"本地模型已自动同步为「{models[0]}」（原配置「{model}」不在本机）"
 
 _SYS_PROMPT = (
-    "你是一名严谨的文档质量核查专家，需对文档片段做【全方位】核查，发现任何问题都应指出；"
-    "同时要尽量减少误报，仅在确有把握时给出结论。\n"
-    "核查维度（全部覆盖）：\n"
-    "1. 用词不当：错别字 / 同音形近字错误、口语化或不规范措辞、行业术语使用错误、词义重复啰嗦；\n"
-    "2. 句型语病：语法错误、成分残缺 / 搭配不当、句式杂糅、语序混乱、指代不明、标点误用导致歧义；\n"
+    "你是一名极其严谨的文档质量核查专家。请对给出的【文档片段】做全方位核查，"
+    "但必须严格基于片段中实际存在的内容，不得臆测、不得引入片段之外的信息。\n"
+    "核查维度（全部覆盖，发现任何确凿问题都要指出）：\n"
+    "1. 用词不当：错别字 / 同音形近字错误、口语化或不规范措辞、术语误用、词义重复啰嗦；\n"
+    "2. 句型语病：语法错误、成分残缺 / 搭配不当、句式杂糅、语序混乱、指代不明、标点误用致歧义；\n"
     "3. 数据不正确：前后数字矛盾、与常识明显不符的数值（金额 / 数量 / 面积 / 日期 / 比例不合常理）、"
     "单位缺失或混用、表述含糊无法核对；\n"
     "4. 表格计算错误：合计 / 小计 / 求和与分项数值不一致、占比与分项不匹配、跨行跨列勾稽关系错误"
-    "（务必重新计算核对，指出具体哪一行 / 哪一项不符）；\n"
+    "（必须逐项重新计算核对，明确指出是哪一行 / 哪一项、正确值应为多少）；\n"
     "5. 逻辑与内容：前后矛盾、表意不清、逻辑不通、内容缺失、事实性错误；\n"
-    "6. 规范符合性：若提供参考资料（标准 / 术语 / 规范），严格依据其核查，表述与标准不符即视为问题；"
-    "参考资料未覆盖的按通用规范判断。\n"
-    "核查要求：\n"
-    "- 错别字仅在高置信度时指出，避免误报形近字 / 多音字；\n"
-    "- 表格 / 数值类问题必须给出具体计算依据（如『分项 80+120=200，但合计写为 300』）；\n"
-    "- 同一文档前后出现不同数字时，指出矛盾并提示需核对原始数据。\n"
-    "请返回严格的 JSON 数组（不要返回任何其它内容或解释），每条格式如下：\n"
-    '[{"quote":"问题原文片段","category":"用词不当/句型语病/错别字/数据错误/'
-    '表格计算/逻辑矛盾/内容缺失/规范不符/其他","issue":"具体问题简述",'
-    '"detail":"说明（含计算依据或矛盾点）","suggestion":"修改建议",'
+    "6. 规范符合性：若提供了参考资料，须严格依据其核查，与标准不符即记为问题并注明所依据的标准条款。\n"
+    "严谨性要求（务必遵守，宁可漏报也不要误报）：\n"
+    "- 每条问题的 quote 必须是片段中【逐字出现】的原句 / 原词，严禁编造或改写后才引用；\n"
+    "- 仅当能从片段中直接举证时才报告；无法确证的问题不要输出；\n"
+    "- 数值 / 表格类问题必须在 detail 中展示计算过程（如『分项 80+120=200，但合计写为 300』）；\n"
+    "- 同一处问题只报告一次，选取最具代表性的 quote；\n"
+    "- category 必须严格取以下之一：用词不当 / 句型语病 / 错别字 / 数据错误 / "
+    "表格计算 / 逻辑矛盾 / 内容缺失 / 规范不符 / 其他；\n"
+    "- severity 按影响程度取 high / medium / low；把握不足时取 low。\n"
+    "返回严格 JSON 数组（不要返回任何其它文字或解释），每条格式如下：\n"
+    '[{"quote":"片段中的原句/原词","category":"上述分类之一","issue":"具体问题简述",'
+    '"detail":"举证说明（含计算/矛盾依据）","suggestion":"修改建议",'
     '"severity":"high或medium或low"}]\n'
     "若片段没有上述问题，返回空数组 []。\n"
 )
+
+# category 严格枚举（用于解析阶段归范化）
+AI_CATEGORIES = ("用词不当", "句型语病", "错别字", "数据错误", "表格计算",
+                 "逻辑矛盾", "内容缺失", "规范不符", "其他")
 
 
 class AiError(Exception):
@@ -252,8 +258,38 @@ def _call_openai(cfg: Dict[str, Any], messages: List[Dict[str, str]]) -> str:
         raise AiError(f"OpenAI 兼容响应结构异常：{str(resp)[:120]}") from exc
 
 
-def _parse_issues(content: str) -> List[Dict[str, Any]]:
-    """从模型输出中提取 JSON 数组（容忍 ```json 包裹与前后缀文本）。"""
+def _norm_text(s: str) -> str:
+    """去掉空白与标点，仅保留字母 / 数字 / 汉字，用于一致性比对。"""
+    return re.sub(r"[^\w]", "", str(s or ""))
+
+
+def _quote_grounded(quote: str, source: str) -> bool:
+    """判断模型引用的 quote 是否确实出现在原文中（防幻觉）。
+
+    允许模型在引用时略有标点 / 空格差异：要求 quote 的归一化全文命中，
+    或其任意 8 字连续片段命中原文（足以证明不是凭空编造）。
+    """
+    if not quote or not source:
+        return True
+    q = _norm_text(quote)
+    s = _norm_text(source)
+    if not q:
+        return False
+    if q in s:
+        return True
+    if len(q) > 8:
+        for i in range(0, len(q) - 7):
+            if q[i:i + 8] in s:
+                return True
+    return False
+
+
+def _parse_issues(content: str, source: str = "") -> List[Dict[str, Any]]:
+    """从模型输出中提取 JSON 数组（容忍 ```json 包裹与前后缀文本）。
+
+    source 为当前片段原文，用于校验 quote 是否真实存在（避免模型编造引用）；
+    分类不在枚举内时归范到最接近项，重复条目（同 quote+issue）去重。
+    """
     text = content.strip()
     start = text.find("[")
     end = text.rfind("]")
@@ -266,20 +302,31 @@ def _parse_issues(content: str) -> List[Dict[str, Any]]:
     if not isinstance(arr, list):
         return []
     out: List[Dict[str, Any]] = []
+    seen: set = set()
     for it in arr:
         if not isinstance(it, dict):
             continue
         quote = str(it.get("quote") or "").strip()
-        if not quote:
+        issue = str(it.get("issue") or "").strip()
+        if not quote or not issue:
+            continue
+        # 引用必须能在原文中找到，否则视为幻觉，丢弃以保证严谨
+        if not _quote_grounded(quote, source):
             continue
         sev = str(it.get("severity") or "medium")
         if sev not in ("high", "medium", "low"):
             sev = "medium"
         cat = str(it.get("category") or "").strip()
+        if cat not in AI_CATEGORIES:
+            cat = next((c for c in AI_CATEGORIES if c and c in cat), "其他")
+        key = (_norm_text(quote), _norm_text(issue))
+        if key in seen:
+            continue
+        seen.add(key)
         out.append({
             "quote": clip(quote, 120),
             "category": cat,
-            "issue": str(it.get("issue") or "语义问题"),
+            "issue": issue,
             "detail": str(it.get("detail") or "").strip(),
             "suggestion": str(it.get("suggestion") or "").strip(),
             "severity": sev,
@@ -570,6 +617,7 @@ def ai_check_file(path: str, ftype: str, issues_out: List[Issue],
         ref_text = _load_ref_text(int(ai.get("ref_max_chars") or 2000))
     added = 0
     fail_reasons: List[str] = []
+    seen_global: set = set()  # 跨段去重，避免同一问题在重叠分段中重复出现
     for k, (loc, text) in enumerate(chunks, 1):
         if cancel and cancel():
             return added, f"任务已取消（已完成 {added} 条）"
@@ -587,13 +635,17 @@ def ai_check_file(path: str, ftype: str, issues_out: List[Issue],
                 content = _call_ollama(ai, _messages(text, ref_text),
                                        on_token=on_token) if mode == "local" \
                     else _call_openai(ai, _messages(text, ref_text))
-            items = _parse_issues(content)
+            items = _parse_issues(content, text)
         except AiError as exc:
             fail_reasons.append(f"{loc}：{exc}")
             continue
         for it in items:
+            gkey = (_norm_text(it["quote"]), _norm_text(it["issue"]))
+            if gkey in seen_global:
+                continue
             if limit > 0 and len(issues_out) >= limit:
                 break
+            seen_global.add(gkey)
             cat = f"[{it['category']}] " if it.get("category") else ""
             issues_out.append(Issue(
                 rule_key=AI_RULE_KEY,
@@ -620,7 +672,9 @@ def _messages(text: str, ref_text: str = "") -> List[Dict[str, str]]:
         msgs.append({
             "role": "system",
             "content": "以下是用户上传的核验参考资料（行业标准 / 术语定义 / 书写规范），"
-                       "核验时请严格依据这些标准检查文档，不得违背：\n" + ref_text,
+                       "核验时请严格依据这些标准检查文档，不得违背；"
+                       "凡判定为『规范不符』的问题，必须在 detail 中注明所依据的标准名称或条款：\n"
+                       + ref_text,
         })
     msgs.append({"role": "user", "content": f"文档片段：\n{text}"})
     return msgs
