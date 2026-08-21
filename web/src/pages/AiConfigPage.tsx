@@ -221,7 +221,7 @@ function BasicTab({
           <Field label="接口地址 base_url">
             <HoloInput
               className="flex-1"
-              placeholder={ai.mode === "online" ? "如 https://api.deepseek.com/v1" : "Ollama 默认 http://127.0.0.1:11434"}
+              placeholder={ai.mode === "online" ? "如 https://api.deepseek.com/v1 或 https://open.bigmodel.cn/api/paas/v4（含版本前缀）" : "Ollama 默认 http://127.0.0.1:11434"}
               value={ai.base_url ?? ""}
               onChange={(e) => setAi({ base_url: e.target.value })}
             />

@@ -350,11 +350,23 @@ def _call_ollama_stream(url: str, payload: Dict[str, Any],
 
 
 def _call_openai(cfg: Dict[str, Any], messages: List[Dict[str, str]]) -> str:
-    """OpenAI 兼容 /chat/completions（联网）。"""
+    """OpenAI 兼容 /chat/completions（联网）。
+
+    不同厂商版本前缀不同（OpenAI/DeepSeek 为 /v1，智谱 GLM 为 /v4 等），
+    这里按 base_url 自动拼接，避免硬套 /v1 导致 404：
+      - 已以 /chat/completions 结尾：原样使用
+      - 以 /vN（如 /v1、/v4）结尾：追加 /chat/completions
+      - 其它：默认追加 /v1/chat/completions（OpenAI 兼容习惯）
+    """
     base = str(cfg.get("base_url") or "").rstrip("/")
     if not base:
         raise AiError("未配置联网 AI 接口地址 base_url")
-    url = base + "/chat/completions" if base.endswith("/v1") else base + "/v1/chat/completions"
+    if base.endswith("/chat/completions"):
+        url = base
+    elif re.search(r"/v\d+$", base):
+        url = base + "/chat/completions"
+    else:
+        url = base + "/v1/chat/completions"
     headers = {}
     key = str(cfg.get("api_key") or "").strip()
     if key:
