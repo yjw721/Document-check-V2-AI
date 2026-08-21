@@ -119,49 +119,18 @@ export default function UploadTab() {
         <FieldLabel>文件夹路径（如 D:\合同\2026）</FieldLabel>
         <HoloInput placeholder="请输入本地绝对路径" value={folder} onChange={(e) => setFolder(e.target.value)} />
         <div className="mt-4 flex flex-wrap items-center gap-4">
-          <HoloSwitchLocal checked={recursive} onChange={setRecursive} label="递归子目录" />
+          <label className="flex cursor-pointer items-center gap-2 text-[13px] text-white/70">
+            <input
+              type="checkbox"
+              checked={recursive}
+              onChange={(e) => setRecursive(e.target.checked)}
+              className="h-4 w-4 accent-[var(--accent)]"
+            />
+            递归子目录
+          </label>
           <HoloButton onClick={startFolder}>扫描并检测</HoloButton>
         </div>
       </HoloCard>
-
-      <HoloCard className="p-6">
-        <div className="flex flex-wrap items-center gap-3">
-          <SectionTitle className="!mb-0">AI 智能核验</SectionTitle>
-          <span className="text-xs text-white/45">
-            {ai.enabled
-              ? ai.mode === "local"
-                ? `本地 AI 已开启（${ai.model || "qwen2.5:7b"}，零联网）`
-                : `联网 AI 已开启（${ai.model || "未配置模型"}）`
-              : "当前未启用"}
-          </span>
-          <HoloButton
-            size="sm"
-            className="ml-auto"
-            onClick={() => (window.location.hash = "#aiconfig")}
-          >
-            前往 AI 配置 →
-          </HoloButton>
-        </div>
-        <p className="mt-2 text-xs leading-relaxed text-white/45">
-          AI 核验的模型、温度、上下文、角色风格、提示词预设、知识库、限流与缓存等全部后台参数，
-          已统一归入独立「AI 配置」模块（后台管理 · 仅管理员可见）。
-        </p>
-      </HoloCard>
     </div>
-  );
-}
-
-/* 本地开关（避免与已移除的 AI 配置弹窗耦合） */
-function HoloSwitchLocal({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
-  return (
-    <label className="flex cursor-pointer items-center gap-2 text-[13px] text-white/70">
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-        className="h-4 w-4 accent-[var(--accent)]"
-      />
-      {label}
-    </label>
   );
 }

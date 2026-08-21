@@ -47,11 +47,32 @@ export default function AiConfigPage() {
     if (!settings) return;
     setSettings({ ...settings, ai: { ...ai, ...patch } });
   };
+  /* 始终保存最新 settings（避免同一 tick 内先 setAi 再 save 读到旧值导致覆盖丢失） */
+  const settingsRef = useRef<SettingsData | null>(null);
+  settingsRef.current = settings;
   const save = async (msg = "AI 配置已保存") => {
-    if (!settings) return;
+    const cur = settingsRef.current;
+    if (!cur) return;
     setSaving(true);
     try {
-      await api.saveSettings(settings);
+      await api.saveSettings(cur);
+      toast(msg);
+    } catch (e) {
+      toast((e as Error).message, "err");
+    } finally {
+      setSaving(false);
+    }
+  };
+  /* 即时落盘：同时更新 state 与 ref，保证后续保存读到最新值 */
+  const commitAi = async (patch: Partial<AiSettings>, msg = "AI 配置已保存") => {
+    const cur = settingsRef.current;
+    if (!cur) return;
+    const next = { ...cur, ai: { ...(cur.ai ?? {}), ...patch } } as SettingsData;
+    settingsRef.current = next;
+    setSettings(next);
+    setSaving(true);
+    try {
+      await api.saveSettings(next);
       toast(msg);
     } catch (e) {
       toast((e as Error).message, "err");
@@ -110,7 +131,7 @@ export default function AiConfigPage() {
         <AdvancedTab ai={ai} setAi={setAi} saving={saving} onSave={save} />
       )}
       {tab === "prompt" && (
-        <PromptTab ai={ai} setAi={setAi} saving={saving} onSave={save} />
+        <PromptTab ai={ai} setAi={setAi} saving={saving} onSave={save} onCommit={commitAi} />
       )}
       {tab === "kb" && <KbTab />}
       {tab === "log" && <LogTab />}
@@ -360,26 +381,27 @@ function AdvancedTab({
 
 /* ---------------- 自定义提示词管理 ---------------- */
 function PromptTab({
-  ai, setAi, saving, onSave,
+  ai, setAi, saving, onSave, onCommit,
 }: {
   ai: AiSettings;
   setAi: (p: Partial<AiSettings>) => void;
   saving: boolean;
   onSave: () => void;
+  onCommit: (patch: Partial<AiSettings>, msg?: string) => void;
 }) {
   const presets = ai.prompt_presets ?? [];
   const [editing, setEditing] = useState<AiPromptPreset | null>(null);
 
-  const upsert = (p: AiPromptPreset) => {
+  const upsertAndCommit = (p: AiPromptPreset) => {
     const exists = presets.some((x) => x.id === p.id);
     const next = exists ? presets.map((x) => (x.id === p.id ? p : x)) : [...presets, p];
-    setAi({ prompt_presets: next });
+    onCommit({ prompt_presets: next });
   };
-  const remove = (id: string) => {
+  const removeAndCommit = (id: string) => {
     const next = presets.filter((x) => x.id !== id);
     const patch: Partial<AiSettings> = { prompt_presets: next };
     if (ai.active_preset === id) patch.active_preset = "";
-    setAi(patch);
+    onCommit(patch, "预设已删除");
   };
 
   return (
@@ -424,7 +446,7 @@ function PromptTab({
                 <span className="min-w-0 flex-1 truncate text-xs text-white/85">{p.name || "（未命名）"}</span>
                 <span className="shrink-0 text-[10px] text-white/35">{p.scope ?? "all"}</span>
                 <button className="shrink-0 rounded-md px-1.5 text-xs text-sky-300/80 hover:bg-sky-400/10" onClick={() => setEditing(p)}>编辑</button>
-                <button className="shrink-0 rounded-md px-1.5 text-xs text-red-300/80 hover:bg-red-400/10" onClick={() => remove(p.id)}>删除</button>
+                <button className="shrink-0 rounded-md px-1.5 text-xs text-red-300/80 hover:bg-red-400/10" onClick={() => removeAndCommit(p.id)}>删除</button>
               </div>
             ))}
           </div>
@@ -442,8 +464,7 @@ function PromptTab({
           preset={editing}
           onClose={() => setEditing(null)}
           onSave={(p) => {
-            upsert(p);
-            onSave();
+            upsertAndCommit(p);
             setEditing(null);
           }}
         />
@@ -464,7 +485,8 @@ function PresetEditor({
   const [scope, setScope] = useState(preset.scope ?? "all");
   return (
     <div className="fixed inset-0 z-40 grid place-items-center bg-black/55 p-4" onClick={onClose}>
-      <HoloCard className="w-full max-w-2xl p-6">
+      <div className="w-full max-w-2xl" onClick={(e) => e.stopPropagation()}>
+        <HoloCard className="w-full p-6">
         <SectionTitle>编辑提示词预设</SectionTitle>
         <div className="mt-3 space-y-3">
           <div>
@@ -500,10 +522,11 @@ function PresetEditor({
               onSave({ id: preset.id, name: name.trim() || "未命名预设", content, scope });
             }}
           >
-            保存预设
+             保存预设
           </HoloButton>
         </div>
       </HoloCard>
+      </div>
     </div>
   );
 }
