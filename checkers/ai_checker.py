@@ -99,17 +99,28 @@ def resolve_local_model(cfg: Dict[str, Any]) -> Tuple[str, str]:
     return models[0], f"本地模型已自动同步为「{models[0]}」（原配置「{model}」不在本机）"
 
 _SYS_PROMPT = (
-    "你是一名文档质量核查专家。以下是待核查的文档片段。\n"
-    "请只针对【语义与内容层面】的问题进行核查，例如：前后矛盾、表意不清、"
-    "逻辑不通、内容缺失、事实或数字表述错误、语句不通顺等；\n"
-    "不要检查格式排版、标点符号、错别字、单位符号等机械性、规则类问题。\n"
-    "如果提供了参考资料（行业标准 / 术语定义 / 书写规范），请严格依据参考资料"
-    "核查：文档表述与参考标准不符、用词不合规范、术语含义使用错误等，均视为问题；"
-    "参考资料未覆盖的内容按你的通用知识判断。\n"
-    "请返回严格的 JSON 数组（不要返回任何其它内容或解释），格式如下：\n"
-    '[{"quote":"问题原文片段","issue":"问题类型","detail":"问题说明",'
-    '"suggestion":"修改建议","severity":"high或medium或low"}]\n'
-    "若片段没有问题，返回空数组 []。\n"
+    "你是一名严谨的文档质量核查专家，需对文档片段做【全方位】核查，发现任何问题都应指出；"
+    "同时要尽量减少误报，仅在确有把握时给出结论。\n"
+    "核查维度（全部覆盖）：\n"
+    "1. 用词不当：错别字 / 同音形近字错误、口语化或不规范措辞、行业术语使用错误、词义重复啰嗦；\n"
+    "2. 句型语病：语法错误、成分残缺 / 搭配不当、句式杂糅、语序混乱、指代不明、标点误用导致歧义；\n"
+    "3. 数据不正确：前后数字矛盾、与常识明显不符的数值（金额 / 数量 / 面积 / 日期 / 比例不合常理）、"
+    "单位缺失或混用、表述含糊无法核对；\n"
+    "4. 表格计算错误：合计 / 小计 / 求和与分项数值不一致、占比与分项不匹配、跨行跨列勾稽关系错误"
+    "（务必重新计算核对，指出具体哪一行 / 哪一项不符）；\n"
+    "5. 逻辑与内容：前后矛盾、表意不清、逻辑不通、内容缺失、事实性错误；\n"
+    "6. 规范符合性：若提供参考资料（标准 / 术语 / 规范），严格依据其核查，表述与标准不符即视为问题；"
+    "参考资料未覆盖的按通用规范判断。\n"
+    "核查要求：\n"
+    "- 错别字仅在高置信度时指出，避免误报形近字 / 多音字；\n"
+    "- 表格 / 数值类问题必须给出具体计算依据（如『分项 80+120=200，但合计写为 300』）；\n"
+    "- 同一文档前后出现不同数字时，指出矛盾并提示需核对原始数据。\n"
+    "请返回严格的 JSON 数组（不要返回任何其它内容或解释），每条格式如下：\n"
+    '[{"quote":"问题原文片段","category":"用词不当/句型语病/错别字/数据错误/'
+    '表格计算/逻辑矛盾/内容缺失/规范不符/其他","issue":"具体问题简述",'
+    '"detail":"说明（含计算依据或矛盾点）","suggestion":"修改建议",'
+    '"severity":"high或medium或low"}]\n'
+    "若片段没有上述问题，返回空数组 []。\n"
 )
 
 
@@ -264,8 +275,10 @@ def _parse_issues(content: str) -> List[Dict[str, Any]]:
         sev = str(it.get("severity") or "medium")
         if sev not in ("high", "medium", "low"):
             sev = "medium"
+        cat = str(it.get("category") or "").strip()
         out.append({
             "quote": clip(quote, 120),
+            "category": cat,
             "issue": str(it.get("issue") or "语义问题"),
             "detail": str(it.get("detail") or "").strip(),
             "suggestion": str(it.get("suggestion") or "").strip(),
@@ -299,12 +312,13 @@ def _extract_word(path: str) -> List[Tuple[str, str]]:
         t = (p.text or "").strip()
         if len(t) >= 4:
             blocks.append((f"第 {i} 段", t))
+    # 表格按整行传递（单元格用 | 连接），便于核查合计 / 小计与分项是否一致
     for ti, table in enumerate(doc.tables, start=1):
         for ri, row in enumerate(table.rows, start=1):
-            for ci, cell in enumerate(row.cells, start=1):
-                t = (cell.text or "").strip()
-                if len(t) >= 4:
-                    blocks.append((f"表 {ti} 第 {ri} 行第 {ci} 列", t))
+            cells = [c.text.strip() for c in row.cells]
+            t = " | ".join(c for c in cells if c)
+            if len(t) >= 2:
+                blocks.append((f"表 {ti} 第 {ri} 行", t))
     return blocks
 
 
@@ -315,9 +329,10 @@ def _extract_excel(path: str) -> List[Tuple[str, str]]:
     try:
         for ws in wb.worksheets:
             for ri, row in enumerate(ws.iter_rows(values_only=True), start=1):
-                for ci, val in enumerate(row, start=1):
-                    if isinstance(val, str) and len(val.strip()) >= 4:
-                        blocks.append((f"「{ws.title}」第 {ri} 行第 {ci} 列", val.strip()))
+                cells = [str(v).strip() for v in row if v is not None and str(v).strip()]
+                t = " | ".join(cells)
+                if len(t) >= 2:
+                    blocks.append((f"「{ws.title}」第 {ri} 行", t))
     finally:
         wb.close()
     return blocks
@@ -579,12 +594,13 @@ def ai_check_file(path: str, ftype: str, issues_out: List[Issue],
         for it in items:
             if limit > 0 and len(issues_out) >= limit:
                 break
+            cat = f"[{it['category']}] " if it.get("category") else ""
             issues_out.append(Issue(
                 rule_key=AI_RULE_KEY,
                 rule_title=AI_RULE_TITLE,
                 severity=it["severity"],
                 location=loc,
-                detail=f"{it['issue']}：{it['detail']}",
+                detail=f"{cat}{it['issue']}：{it['detail']}",
                 snippet=it["quote"],
                 suggestion=it["suggestion"],
                 source="ai",
