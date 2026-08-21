@@ -110,6 +110,37 @@ def _repair_json(s: str) -> str:
     return "".join(out)
 
 
+def _balance_json(s: str) -> str:
+    """补齐被截断 JSON 缺失的闭合括号/引号（非字符串感知的简单栈平衡）。
+
+    仅用于模型输出在尾部被截断（num_predict 不足）时的兜底恢复，
+    尽量把不完整的对象补全为可解析结构。
+    """
+    stack: List[str] = []
+    in_str = False
+    esc = False
+    opens = {"{": "}", "[": "]"}
+    for ch in s:
+        if esc:
+            esc = False
+            continue
+        if ch == "\\" and in_str:
+            esc = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch in opens:
+            stack.append(opens[ch])
+        elif ch in ("}", "]"):
+            if stack and stack[-1] == ch:
+                stack.pop()
+    # 追加缺失的闭合符（反向）
+    return s + "".join(reversed(stack))
+
+
 def _try_load(segment: str) -> Any:
     s = segment.strip()
     if not s:
@@ -121,14 +152,18 @@ def _try_load(segment: str) -> Any:
     try:
         return json.loads(_repair_json(s))
     except json.JSONDecodeError:
+        pass
+    try:
+        return json.loads(_balance_json(_repair_json(s)))
+    except json.JSONDecodeError:
         return None
 
 
 def _extract_json_obj(content: str) -> Dict[str, Any]:
     """从模型输出中提取 JSON 对象（容忍 ```json 包裹、前后缀文本、尾随逗号与裸引号）。
 
-    候选策略：尝试所有可解析的完整对象，优先选择覆盖文本范围最大者，
-    避免模型输出损坏（截断/重复片段）时误取最内层碎片对象。
+    候选策略：尝试所有可解析的完整对象；优先选取【含 wordbanks/rules 键】的对象
+    （即真正的生成结果，避免误取思考链中的伪 JSON 碎片），其次取覆盖文本范围最大者。
     """
     text = content.strip()
     m = re.search(r"```(?:json)?\s*(.*?)```", text, re.S)
@@ -138,8 +173,7 @@ def _extract_json_obj(content: str) -> Dict[str, Any]:
     ends = [x.start() for x in re.finditer(r"\}", text)]
     if not starts or not ends:
         raise AiError("模型未返回 JSON 对象")
-    best: Optional[Dict[str, Any]] = None
-    best_len = -1
+    candidates: List[Tuple[int, Dict[str, Any]]] = []
     for si in range(len(starts)):
         s = starts[si]
         for ei in range(len(ends) - 1, -1, -1):
@@ -148,12 +182,17 @@ def _extract_json_obj(content: str) -> Dict[str, Any]:
                 break
             obj = _try_load(text[s:e + 1])
             if isinstance(obj, dict):
-                if (e - s) > best_len:
-                    best, best_len = obj, e - s
+                candidates.append((e - s, obj))
                 break  # 该起点已解析出最大端点对象，无需继续缩小范围
-    if best is not None:
-        return best
-    raise AiError(f"模型返回的 JSON 无法解析：{clip(text, 80)}")
+    if not candidates:
+        raise AiError(f"模型返回的 JSON 无法解析：{clip(text, 80)}")
+    # 优先：含生成结果键的对象
+    schema = [obj for _, obj in candidates if ("wordbanks" in obj or "rules" in obj)]
+    if schema:
+        # 同组内取范围最大者（更完整的对象）
+        return max(schema, key=lambda o: len(json.dumps(o, ensure_ascii=False)))
+    # 兜底：范围最大者
+    return max(candidates, key=lambda c: c[0])[1]
 
 
 def _norm_severity(sev: str) -> str:
@@ -225,8 +264,12 @@ def _gen(ai: Dict[str, Any], sys_prompt: str, user_text: str,
     """
     cfg = {**_AI_DEFAULTS, **(ai or {})}
     # 生成为低频重任务：qwen3 系本地模型的思考链无法硬禁（模板层强制），
-    # CPU 上思考+输出最长可达 10-20 分钟，超时下限放宽到 30 分钟
+    # 思考会占用大量 token 预算，必须把 num_predict 抬高到足以容纳
+    # 思考 + JSON 输出，否则 JSON 被截断导致解析失败（表现为“生成无效”）。
+    # CPU 上思考+输出最长可达 10-20 分钟，超时下限放宽到 30 分钟。
     cfg["timeout"] = max(float(cfg.get("timeout") or 60), 1800)
+    # 首次预算偏低以控速，空结果重试时显著加大，避免截断
+    np_default = 20000 if not _retry else 32000
     mode = cfg.get("mode") or "local"
     if mode == "local":
         _model, _sync = resolve_local_model(cfg)
@@ -243,7 +286,7 @@ def _gen(ai: Dict[str, Any], sys_prompt: str, user_text: str,
             else:
                 content = _call_ollama(cfg, [{"role": "system", "content": sys_prompt},
                                              {"role": "user", "content": user_text}],
-                                       think=False, options={"num_predict": 10000})
+                                        think=False, options={"num_predict": np_default})
         else:
             content = _call_openai(cfg, [{"role": "system", "content": sys_prompt},
                                          {"role": "user", "content": user_text}])
