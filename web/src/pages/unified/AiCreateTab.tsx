@@ -20,6 +20,7 @@ import type {
   WordbanksData,
   RuleFilterStat,
   LearnLogsResp,
+  BuildLogsResp,
 } from "../../lib/types";
 import { useToast } from "../../components/ui/Toast";
 import { SEV_LABEL } from "../../lib/constants";
@@ -54,6 +55,7 @@ export default function AiCreateTab() {
   const [busy, setBusy] = useState<"dialogue" | "text" | "doc" | null>(null);
   const [docName, setDocName] = useState("");
   const [result, setResult] = useState<AiBuildResult | null>(null);
+  const [buildLogs, setBuildLogs] = useState<BuildLogsResp | null>(null);
   const [filterStat, setFilterStat] = useState<RuleFilterStat | null>(null);
   const [wbSel, setWbSel] = useState<Record<string, boolean>>({});
   const [ruleSel, setRuleSel] = useState<Record<string, boolean>>({});
@@ -107,19 +109,41 @@ export default function AiCreateTab() {
 
   const runBuild = async (kind: "dialogue" | "text" | "doc", file?: File) => {
     setBusy(kind);
+    setResult(null);
+    setBuildLogs(null);
     try {
       const r = kind === "dialogue"
         ? await api.aiBuildDialogue(dialogue.trim())
         : kind === "text"
           ? await api.aiBuildText(text.trim())
           : await api.aiBuildDoc(file!);
-      if (!r.ok) {
-        toast(r.message, "err");
-        setResult(null);
+      if (!r.ok || !r.bid) {
+        toast(r.message || "启动失败", "err");
         return;
       }
-      pick(r.result);
-      reportFilter(r.filter, kind === "dialogue" ? "对话式创建完成" : kind === "text" ? "文本式创建完成" : `已阅读「${file!.name}」`);
+      const bid = r.bid;
+      const label = kind === "dialogue" ? "对话式创建完成"
+        : kind === "text" ? "文本式创建完成" : `已阅读「${file!.name}」`;
+      while (mountedRef.current) {
+        let l: BuildLogsResp;
+        try {
+          l = await api.aiBuildLogs(bid);
+        } catch {
+          break;
+        }
+        setBuildLogs(l);
+        const st = l.state;
+        if (st.done || !st.running) {
+          if (st.ok && st.result) {
+            pick(st.result);
+            reportFilter(st.filter, label);
+          } else {
+            toast(st.message || "生成失败", "err");
+          }
+          break;
+        }
+        await new Promise((res) => setTimeout(res, 800));
+      }
     } catch (e) {
       toast((e as Error).message, "err");
     } finally {
@@ -425,6 +449,8 @@ export default function AiCreateTab() {
           </div>
         </HoloCard>
       )}
+
+      {buildLogs && <BuildProcessPanel logs={buildLogs} />}
 
       {result && (
         <HoloCard className="p-4" glow="sm">
@@ -909,11 +935,113 @@ const STAGE_SEQ: { key: string; label: string; icon: string }[] = [
   { key: "done", label: "完成", icon: "✅" },
 ];
 
+/* ---------- AI 生成推理过程面板（对话/文本/文档式，与自学习同构） ---------- */
+const BUILD_STAGES: { key: string; label: string; icon: string }[] = [
+  { key: "start", label: "接收输入", icon: "📥" },
+  { key: "prompt", label: "构建提示", icon: "📨" },
+  { key: "infer", label: "本地推理", icon: "🧠" },
+  { key: "parse", label: "解析产出", icon: "📋" },
+  { key: "validate", label: "入库校验", icon: "🛡️" },
+  { key: "done", label: "完成", icon: "✅" },
+];
+
+function BuildProcessPanel({ logs }: { logs: BuildLogsResp }) {
+  const viewRef = useRef<HTMLDivElement>(null);
+  const data = logs.logs;
+  const st = logs.state;
+
+  const stages = useMemo(() => {
+    const seen = new Set(data.filter((l) => l.kind === "stage").map((l) => l.text.match(/^\[(\w+)\]/)?.[1] ?? ""));
+    return BUILD_STAGES.map((s) => {
+      let active = false;
+      let done = false;
+      if (s.key === "done") {
+        done = st.done;
+        active = false;
+      } else {
+        const hit = seen.has(s.key);
+        done = hit;
+        active = !done && (st.running || !st.done);
+      }
+      return { ...s, done, active };
+    });
+  }, [data, st]);
+
+  const thinking = useMemo(() => data.filter((l) => l.kind === "thinking").map((l) => l.text).join(""), [data]);
+  const output = useMemo(() => data.filter((l) => l.kind === "token").map((l) => l.text).join(""), [data]);
+  const errLog = useMemo(() => data.find((l) => l.kind === "error")?.text, [data]);
+
+  useEffect(() => {
+    const el = viewRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [thinking, output, errLog]);
+
+  const runTone = st.done ? (st.ok ? "ok" : "danger") : "warn";
+  const runLabel = st.done ? (st.ok ? "推理完成" : "推理失败") : "推理中…（流式输出）";
+
+  return (
+    <HoloCard className="overflow-hidden p-0" glow="sm">
+      <div className="flex flex-wrap items-center gap-2 px-6 pt-5">
+        <SectionTitle className="!mb-0">AI 推理过程</SectionTitle>
+        <HoloBadge tone={runTone}>{runLabel}</HoloBadge>
+        <span className="ml-auto text-[11px] text-white/35">全程离线 · 数据不出本机</span>
+      </div>
+      <div className="p-6 pt-4">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {stages.map((s, i) => (
+            <div key={s.key} className="flex items-center gap-1.5">
+              <span className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-all duration-500 ${
+                s.done
+                  ? "border-[rgba(70,211,154,0.35)] bg-[rgba(70,211,154,0.12)] text-[var(--tone-ok)]"
+                  : s.active
+                    ? "border-[rgba(79,214,201,0.4)] bg-[rgba(79,214,201,0.1)] text-[var(--tone-cyan)] shadow-[0_0_12px_var(--glow-btn)]"
+                    : "border-white/10 bg-white/[0.03] text-white/35"
+              }`}>
+                <span>{s.done ? "✓" : s.active ? "⏳" : s.icon}</span>
+                {s.label}
+              </span>
+              {i < stages.length - 1 && <span className="text-[10px] text-white/25">▸</span>}
+            </div>
+          ))}
+        </div>
+        {(thinking || output || errLog) && (
+          <div className="mt-4 space-y-3">
+            {thinking && (
+              <details className="group rounded-2xl border border-white/10 bg-white/[0.03]">
+                <summary className="cursor-pointer select-none px-4 py-2.5 text-xs text-white/55 transition-colors hover:text-white/85">
+                  🧠 模型思考链（{thinking.length} 字）{st.running ? "· 生成中…" : ""}
+                </summary>
+                <div className="max-h-52 overflow-y-auto border-t border-white/[0.07] px-4 py-3 font-mono text-[12px] leading-relaxed whitespace-pre-wrap text-white/65">
+                  {thinking}
+                </div>
+              </details>
+            )}
+            <div ref={viewRef} className="max-h-80 overflow-y-auto rounded-2xl border border-[var(--border-accent-soft)] bg-[rgba(10,10,31,0.6)] px-4 py-3 font-mono text-[12px] leading-relaxed whitespace-pre-wrap text-cyan-100/85">
+              {output || (errLog ? <span className="text-[var(--tone-danger)]">{errLog}</span> : "等待模型输出…")}
+              {st.running && <span className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse rounded-sm bg-[var(--tone-cyan)] align-middle" />}
+            </div>
+          </div>
+        )}
+        {data.length > 0 && (
+          <div className="mt-3 space-y-1">
+            {data.filter((l) => l.kind === "stage" || l.kind === "error").slice(-6).map((l, i) => (
+              <div key={i} className="flex items-start gap-2 text-[11px]">
+                <span className="shrink-0 text-white/30">{l.ts}</span>
+                <span className={l.kind === "error" ? "text-[var(--tone-danger)]" : "text-white/60"}>{l.text}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </HoloCard>
+  );
+}
+
+/* ---------- 本地 AI 推理过程面板（自学习）：阶段流 + 思考链折叠 + 流式输出 ---------- */
 function LearnProcessPanel({ learnLogs }: { learnLogs: LearnLogsResp }) {
   const viewRef = useRef<HTMLDivElement>(null);
   const logs = learnLogs.logs;
   const st = learnLogs.state;
-
   const stages = useMemo(() => {
     const seen = new Set(logs.filter((l) => l.kind === "stage").map((l) => l.text.match(/^\[(\w+)\]/)?.[1] ?? ""));
     return STAGE_SEQ.map((s) => {

@@ -1031,55 +1031,132 @@ def _mark_source(result: Dict[str, Any], source: str, label: str) -> None:
             e.setdefault("tag", label)
 
 
+# ---- AI 规则/词库智能生成：对话式 / 文本式 / 文档式（流式展示推理过程） ----
+_BUILD_LOGS: Dict[str, List[Dict[str, Any]]] = {}
+_BUILD_STATE: Dict[str, Dict[str, Any]] = {}
+_MAX_BUILD_LOG_ENTRIES = 20000
+
+
+def _blog(bid: str, kind: str, text: str) -> None:
+    """写入 AI 生成过程日志缓冲（线程安全，带超长截断）。"""
+    buf = _BUILD_LOGS.setdefault(bid, [])
+    if len(buf) >= _MAX_BUILD_LOG_ENTRIES:
+        buf.append({"ts": time.strftime("%H:%M:%S"), "kind": "stage",
+                    "text": "（日志超长，已截断后续输出）"})
+        return
+    buf.append({"ts": time.strftime("%H:%M:%S"), "kind": kind, "text": text})
+
+
+def _build_runner(bid: str, kind: str, text: str, raw: bytes, filename: str) -> None:
+    """后台执行生成并实时写入推理过程日志（token 流 + 阶段）。"""
+    from checkers.ai_builder import run_build as _brun
+    ai = load_settings().get("ai") or {}
+
+    def on_log(stage: str, info: Dict[str, Any]) -> None:
+        txt = str(info.get("text", ""))
+        if stage == "error":
+            _blog(bid, "error", txt)
+        else:
+            _blog(bid, "stage", f"[{stage}] {txt}")
+
+    def on_token(t: str, k: str) -> None:
+        _blog(bid, "token" if k == "content" else "thinking", t)
+
+    try:
+        ok, msg, result = _brun(kind, text=text, raw=raw, filename=filename,
+                                ai=ai, on_log=on_log, on_token=on_token)
+        filter_stat: Dict[str, Any] = {}
+        if ok:
+            _blog(bid, "stage", "[validate] 入库前置校验（过滤无效/重复规则）…")
+            filter_stat = rule_filter_generated(result, channel="ai_build")
+            _mark_source(result, "ai_dialogue" if kind == "dialogue" else "ai_text",
+                         "AI对话创建" if kind == "dialogue" else "AI文本创建")
+            _blog(bid, "stage", f"[done] 生成完成：词库 {len(result['wordbanks'])} 组、"
+                               f"规则 {len(result['rules'])} 条")
+        else:
+            _blog(bid, "stage", f"[done] 生成结束：{msg}")
+        with _TASK_LOCK:
+            st = _BUILD_STATE[bid]
+            st.update({"running": False, "done": True, "ok": ok,
+                       "message": msg, "result": result, "filter": filter_stat})
+    except Exception as exc:  # noqa: BLE001 - 后台线程兜底
+        with _TASK_LOCK:
+            st = _BUILD_STATE[bid]
+            st.update({"running": False, "done": True, "ok": False,
+                       "message": f"{type(exc).__name__}：{str(exc)[:200]}",
+                       "result": None, "filter": None})
+
+
+def _new_build_bid() -> str:
+    return "b" + str(int(time.time() * 1000))
+
+
 @app.post("/api/ai/build/dialogue")
 def api_ai_build_dialogue(payload: Dict[str, Any]):
-    """对话式创建：自然语言描述需求 → 生成词库分组 + 规则（入库前置校验）。"""
+    """对话式创建：自然语言描述需求 → 生成词库分组 + 规则（流式展示推理过程）。"""
     if not _ai_create_enabled():
-        return {"ok": False, "message": "AI 智能生成已关闭（后台设置总开关），可手动编写或导入规则",
-                "result": {"wordbanks": [], "rules": []}}
-    ai = load_settings().get("ai") or {}
-    ok, msg, result = ai_build_dialogue(str(payload.get("text") or ""), ai)
-    filter_stat = rule_filter_generated(result, channel="ai_build") if ok else {}
-    if ok:
-        _mark_source(result, "ai_dialogue", "AI对话创建")
-    return {"ok": ok, "message": msg, "result": result, "filter": filter_stat}
+        return {"ok": False, "message": "AI 智能生成已关闭（后台设置总开关），可手动编写或导入规则"}
+    bid = _new_build_bid()
+    with _TASK_LOCK:
+        _BUILD_STATE[bid] = {"running": True, "done": False, "ok": False,
+                             "message": "", "result": None, "filter": None}
+        _BUILD_LOGS[bid] = []
+    text = str(payload.get("text") or "")
+    threading.Thread(target=_build_runner, args=(bid, "dialogue", text, b"", ""),
+                    daemon=True).start()
+    return {"ok": True, "running": True, "bid": bid,
+            "message": "生成任务已启动（本地推理过程实时展示）"}
 
 
 @app.post("/api/ai/build/text")
 def api_ai_build_text(payload: Dict[str, Any]):
-    """文本式创建：粘贴准则/规范/范本文本 → AI 读取批量生成词库与规则（入库前置校验）。"""
+    """文本式创建：粘贴准则/规范/范本文本 → AI 读取批量生成词库与规则（流式展示）。"""
     if not _ai_create_enabled():
-        return {"ok": False, "message": "AI 智能生成已关闭（后台设置总开关），可手动编写或导入规则",
-                "result": {"wordbanks": [], "rules": []}}
-    ai = load_settings().get("ai") or {}
-    ok, msg, result = ai_build_text(str(payload.get("text") or ""), ai)
-    filter_stat = rule_filter_generated(result, channel="ai_build") if ok else {}
-    if ok:
-        _mark_source(result, "ai_text", "AI文本创建")
-    return {"ok": ok, "message": msg, "result": result, "filter": filter_stat}
+        return {"ok": False, "message": "AI 智能生成已关闭（后台设置总开关），可手动编写或导入规则"}
+    bid = _new_build_bid()
+    with _TASK_LOCK:
+        _BUILD_STATE[bid] = {"running": True, "done": False, "ok": False,
+                             "message": "", "result": None, "filter": None}
+        _BUILD_LOGS[bid] = []
+    text = str(payload.get("text") or "")
+    threading.Thread(target=_build_runner, args=(bid, "text", text, b"", ""),
+                    daemon=True).start()
+    return {"ok": True, "running": True, "bid": bid,
+            "message": "生成任务已启动（本地推理过程实时展示）"}
 
 
 @app.post("/api/ai/build/doc")
 async def api_ai_build_doc(files: List[UploadFile] = File(...)):
-    """文档式创建：上传文档（.txt/.md/.csv/.docx/.pdf）→ AI 阅读提取词库与规则。"""
+    """文档式创建：上传文档（.txt/.md/.csv/.docx/.pdf）→ AI 阅读提取词库与规则（流式展示）。"""
     if not _ai_create_enabled():
-        return {"ok": False, "message": "AI 智能生成已关闭（后台设置总开关），可手动编写或导入规则",
-                "result": {"wordbanks": [], "rules": []}}
+        return {"ok": False, "message": "AI 智能生成已关闭（后台设置总开关），可手动编写或导入规则"}
     if not files:
-        return {"ok": False, "message": "未收到文件", "result": {"wordbanks": [], "rules": []}}
+        return {"ok": False, "message": "未收到文件"}
     f = files[0]
     try:
         raw = await f.read()
         if len(raw) > 10 * 1024 * 1024:
-            return {"ok": False, "message": "文件过大（>10MB）", "result": {"wordbanks": [], "rules": []}}
+            return {"ok": False, "message": "文件过大（>10MB）"}
     except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "message": f"读取文件失败：{exc}", "result": {"wordbanks": [], "rules": []}}
-    ai = load_settings().get("ai") or {}
-    ok, msg, result = ai_build_doc(raw, f.filename or "doc.txt", ai)
-    filter_stat = rule_filter_generated(result, channel="ai_build") if ok else {}
-    if ok:
-        _mark_source(result, "ai_text", "AI文本创建")
-    return {"ok": ok, "message": msg, "result": result, "filter": filter_stat}
+        return {"ok": False, "message": f"读取文件失败：{exc}"}
+    bid = _new_build_bid()
+    with _TASK_LOCK:
+        _BUILD_STATE[bid] = {"running": True, "done": False, "ok": False,
+                             "message": "", "result": None, "filter": None}
+        _BUILD_LOGS[bid] = []
+    threading.Thread(target=_build_runner, args=(bid, "doc", "", raw, f.filename or "doc.txt"),
+                    daemon=True).start()
+    return {"ok": True, "running": True, "bid": bid,
+            "message": "生成任务已启动（本地推理过程实时展示）"}
+
+
+@app.get("/api/ai/build/logs")
+def api_ai_build_logs(bid: str = ""):
+    """轮询获取生成过程日志与运行状态（前端实时展示思考过程）。"""
+    return {
+        "logs": list(_BUILD_LOGS.get(bid, [])),
+        "state": dict(_BUILD_STATE.get(bid, {})),
+    }
 
 
 # --- 本地 AI 自学习记忆（人工校对成对样本：系统留存原始文档 + 用户上传修订文档） ---

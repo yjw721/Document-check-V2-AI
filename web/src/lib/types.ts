@@ -328,6 +328,27 @@ export interface AiBuildResp {
   filter?: RuleFilterStat;
 }
 
+/* 生成任务启动响应（对话/文本/文档式：后台流式推理，返回任务 bid 供轮询） */
+export interface BuildStartResp {
+  ok: boolean;
+  message?: string;
+  running?: boolean;
+  bid?: string;
+}
+
+/* 生成过程日志轮询响应（与自学习推理流同构） */
+export interface BuildLogsResp {
+  logs: LearnLogEntry[];
+  state: {
+    running: boolean;
+    done: boolean;
+    ok?: boolean;
+    message?: string;
+    result?: AiBuildResult;
+    filter?: RuleFilterStat;
+  };
+}
+
 /* ---------- 内置词库 ---------- */
 export interface DictMeta {
   file: string;

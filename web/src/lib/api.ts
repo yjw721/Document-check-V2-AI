@@ -4,7 +4,8 @@
    异源（如内置预览面板）回退到绝对地址直连后端（后端已放行 CORS）。
    ============================================================ */
 import type {
-  AiBuildResp,
+  BuildStartResp,
+  BuildLogsResp,
   RuleRejected,
   AiDiff,
   AiMemoryData,
@@ -149,14 +150,16 @@ export const api = {
 
   /* ---------- AI 规则/词库智能生成（对话式 / 文本式 / 文档式） ---------- */
   aiBuildDialogue: (text: string) =>
-    request<AiBuildResp>("POST", "/api/ai/build/dialogue", { text }),
+    request<BuildStartResp>("POST", "/api/ai/build/dialogue", { text }),
   aiBuildText: (text: string) =>
-    request<AiBuildResp>("POST", "/api/ai/build/text", { text }),
+    request<BuildStartResp>("POST", "/api/ai/build/text", { text }),
   aiBuildDoc: (file: File) => {
     const fd = new FormData();
     fd.append("files", file);
-    return request<AiBuildResp>("POST", "/api/ai/build/doc", fd);
+    return request<BuildStartResp>("POST", "/api/ai/build/doc", fd);
   },
+  aiBuildLogs: (bid: string) =>
+    request<BuildLogsResp>("GET", `/api/ai/build/logs?bid=${encodeURIComponent(bid)}`),
 
   /* ---------- 本地 AI 自学习记忆（成对样本） ---------- */
   aiMemory: () => request<AiMemoryData>("GET", "/api/ai_memory"),

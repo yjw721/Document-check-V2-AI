@@ -15,7 +15,8 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Dict, List, Tuple
+import time
+from typing import Any, Dict, List, Optional, Tuple
 
 from checkers.ai_checker import (
     AiError, DEFAULTS as _AI_DEFAULTS, _call_ollama, _call_openai,
@@ -256,7 +257,8 @@ def _parse_result(obj: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _gen(ai: Dict[str, Any], sys_prompt: str, user_text: str,
-         is_bullet: bool = False, _retry: bool = False) -> Tuple[bool, str, Dict[str, Any]]:
+         is_bullet: bool = False, _retry: bool = False,
+         on_token: Optional[Callable[[str, str], None]] = None) -> Tuple[bool, str, Dict[str, Any]]:
     """调用模型并解析生成结果，返回 (是否成功, 说明, 结果)。
 
     is_bullet=True：仅提取简短要点文本（返回 {"text": ...}），不要求 JSON。
@@ -282,11 +284,13 @@ def _gen(ai: Dict[str, Any], sys_prompt: str, user_text: str,
                 # 纯文本要点任务：自然生成（禁思考在该 tag 上易触发
                 # llama-server 解析错误），正文短、截断风险低
                 content = _call_ollama(cfg, [{"role": "system", "content": sys_prompt},
-                                             {"role": "user", "content": user_text}])
+                                             {"role": "user", "content": user_text}],
+                                    on_token=on_token)
             else:
                 content = _call_ollama(cfg, [{"role": "system", "content": sys_prompt},
                                              {"role": "user", "content": user_text}],
-                                        think=False, options={"num_predict": np_default})
+                                        think=False, options={"num_predict": np_default},
+                                        on_token=on_token)
         else:
             content = _call_openai(cfg, [{"role": "system", "content": sys_prompt},
                                          {"role": "user", "content": user_text}])
@@ -307,17 +311,19 @@ def _gen(ai: Dict[str, Any], sys_prompt: str, user_text: str,
     return True, "生成完成", result
 
 
-def build_dialogue(text: str, ai: Dict[str, Any]) -> Tuple[bool, str, Dict[str, Any]]:
+def build_dialogue(text: str, ai: Dict[str, Any],
+                   on_token: Optional[Callable[[str, str], None]] = None) -> Tuple[bool, str, Dict[str, Any]]:
     """对话式创建：按自然语言需求生成词库与规则。"""
     text = (text or "").strip()
     if not text:
         return False, "需求不能为空", {"wordbanks": [], "rules": []}
     if len(text) > 2000:
         text = text[:2000] + "…"
-    return _gen(ai, _SYS_PROMPT, "用户需求：\n" + text)
+    return _gen(ai, _SYS_PROMPT, "用户需求：\n" + text, on_token=on_token)
 
 
-def build_from_doc(raw: bytes, filename: str, ai: Dict[str, Any]) -> Tuple[bool, str, Dict[str, Any]]:
+def build_from_doc(raw: bytes, filename: str, ai: Dict[str, Any],
+                   on_token: Optional[Callable[[str, str], None]] = None) -> Tuple[bool, str, Dict[str, Any]]:
     """文档自建：AI 阅读上传文档后提取词库与规则。
 
     两段式生成：先让模型输出简短要点（思考长但正文短，不易被截断），
@@ -331,21 +337,82 @@ def build_from_doc(raw: bytes, filename: str, ai: Dict[str, Any]) -> Tuple[bool,
         return False, "文档有效文本过少，无法提取", {"wordbanks": [], "rules": []}
     doc_text = doc_text[:2500] + ("…" if len(doc_text) > 2500 else "")
 
-    ok, msg, bullets = _gen(ai, _DOC_BULLET_PROMPT, doc_text, is_bullet=True)
+    ok, msg, bullets = _gen(ai, _DOC_BULLET_PROMPT, doc_text, is_bullet=True, on_token=on_token)
     if not ok:
         return ok, msg, {"wordbanks": [], "rules": []}
     bullets = bullets.get("text", "")
     if len(bullets.strip()) < 10:
-        ok, msg, result = _gen(ai, _DOC_PROMPT, "上传文档内容：\n" + doc_text)
+        ok, msg, result = _gen(ai, _DOC_PROMPT, "上传文档内容：\n" + doc_text, on_token=on_token)
         return ok, (msg + "（要点提取为空，已直接生成）" if ok else msg), result
-    return _gen(ai, _DOC_PROMPT, "以下是根据上传文档提取的检测要点，请据此生成词库与规则：\n" + bullets)
+    return _gen(ai, _DOC_PROMPT, "以下是根据上传文档提取的检测要点，请据此生成词库与规则：\n" + bullets,
+                on_token=on_token)
 
 
-def build_from_text(text: str, ai: Dict[str, Any]) -> Tuple[bool, str, Dict[str, Any]]:
+def build_from_text(text: str, ai: Dict[str, Any],
+                    on_token: Optional[Callable[[str, str], None]] = None) -> Tuple[bool, str, Dict[str, Any]]:
     """文本式创建：粘贴准则/规范/范本文本 → AI 读取并批量生成检测词库与校验规则。"""
     text = (text or "").strip()
     if not text:
         return False, "粘贴内容不能为空", {"wordbanks": [], "rules": []}
     if len(text) > 6000:
         text = text[:6000] + "…"
-    return _gen(ai, _DOC_PROMPT, "用户粘贴的准则/规范/范本文本：\n" + text)
+    return _gen(ai, _DOC_PROMPT, "用户粘贴的准则/规范/范本文本：\n" + text, on_token=on_token)
+
+
+def run_build(kind: str, *, text: str = "", raw: bytes = b"", filename: str = "",
+              ai: Optional[Dict[str, Any]] = None,
+              on_log: Optional[Callable[[str, Dict[str, Any]], None]] = None,
+              on_token: Optional[Callable[[str, str], None]] = None) -> Tuple[bool, str, Dict[str, Any]]:
+    """对话/文本/文档式生成的统一执行器，带阶段日志与 token 流回调（供前端实时展示思考过程）。
+
+    kind ∈ {"dialogue","text","doc"}。返回 (是否成功, 说明, 结果)。
+    阶段日志通过 on_log(stage, {text}) 输出；推理 token 流通过 on_token(text, kind) 输出。
+    """
+    start_ts = time.time()
+
+    def log(stage: str, info: Dict[str, Any]) -> None:
+        if on_log:
+            try:
+                on_log(stage, info)
+            except Exception:  # noqa: BLE001
+                pass
+
+    def tok(t: str, k: str) -> None:
+        if on_token:
+            try:
+                on_token(t, k)
+            except Exception:  # noqa: BLE001
+                pass
+
+    cfg = dict(ai or {})
+    if kind == "dialogue":
+        t = (text or "").strip()
+        if not t:
+            return False, "需求不能为空", {"wordbanks": [], "rules": []}
+        if len(t) > 2000:
+            t = t[:2000] + "…"
+        log("start", {"text": "已接收对话需求，准备生成规则与词库"})
+        log("prompt", {"text": "构建推理提示：本地模型将按自然语言需求生成检测规则与词库"})
+        log("infer", {"text": "本地模型推理中…（流式输出，CPU 推理较慢请耐心等待）"})
+        ok, msg, result = build_dialogue(t, cfg, on_token=tok)
+    elif kind == "text":
+        t = (text or "").strip()
+        if not t:
+            return False, "粘贴内容不能为空", {"wordbanks": [], "rules": []}
+        if len(t) > 6000:
+            t = t[:6000] + "…"
+        log("start", {"text": "已接收准则/规范文本，准备提炼规则与词库"})
+        log("prompt", {"text": "构建推理提示：本地模型将通读文本并批量提炼检测规则与词库"})
+        log("infer", {"text": "本地模型推理中…（流式输出，CPU 推理较慢请耐心等待）"})
+        ok, msg, result = build_from_text(t, cfg, on_token=tok)
+    else:  # doc
+        log("start", {"text": f"已接收上传文档「{filename or 'doc'}」，准备阅读并提取规则与词库"})
+        log("prompt", {"text": "构建推理提示：本地模型将先提取要点，再据此生成规则与词库"})
+        log("infer", {"text": "本地模型推理中…（流式输出，CPU 推理较慢请耐心等待）"})
+        ok, msg, result = build_from_doc(raw or b"", filename or "doc", cfg, on_token=tok)
+    if ok:
+        log("parse", {"text": f"模型产出解析完成：词库 {len(result.get('wordbanks', []))} 组、"
+                              f"规则 {len(result.get('rules', []))} 条（耗时 {time.time() - start_ts:.1f}s）"})
+    else:
+        log("error", {"text": f"生成失败：{msg}"})
+    return ok, msg, result
