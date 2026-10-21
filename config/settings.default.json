@@ -47,6 +47,14 @@
     "max_requests": 10,
     "ref_enabled": true,
     "ref_max_chars": 2000,
-    "create_enabled": true
+    "create_enabled": true,
+    "retry": 1,
+    "verify_scope": "all",
+    "fail_as_issue": false,
+    "deep_review": true,
+    "strict_grounding": true,
+    "min_confidence": 0.6,
+    "active_skills": ["financial_reconciliation", "terminology_consistency"],
+    "custom_skills": []
   }
 }

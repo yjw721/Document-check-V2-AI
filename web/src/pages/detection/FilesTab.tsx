@@ -4,11 +4,23 @@ import HoloButton from "../../components/ui/HoloButton";
 import HoloBadge from "../../components/ui/HoloBadge";
 import EmptyState from "../../components/common/EmptyState";
 import { api } from "../../lib/api";
-import type { FilesData } from "../../lib/types";
+import type { FileResult, FilesData } from "../../lib/types";
 import { FT_TABLE_ICON } from "../../lib/constants";
 import { useToast } from "../../components/ui/Toast";
 
-/* 标签2 · 文件列表：已导入文档清单 + 清空数据 */
+/* 标签2 · 文件列表：已导入文档清单 + 清空数据（含 AI 核验阶段状态徽标） */
+function AiBadge({ r }: { r: FileResult }) {
+  const s = r.ai_status || "";
+  const note = r.ai_note || "";
+  const inner =
+    s === "ok" ? <HoloBadge tone="ok">已核验</HoloBadge> :
+    s === "partial" ? <HoloBadge tone="warn">AI 部分失败</HoloBadge> :
+    s === "fail" ? <HoloBadge tone="danger">AI 核验失败</HoloBadge> :
+    s === "skip" ? <HoloBadge tone="gray">已跳过</HoloBadge> :
+    <span className="text-white/30">未核验</span>;
+  return <span title={note || "AI 智能核验状态"}>{inner}</span>;
+}
+
 export default function FilesTab() {
   const toast = useToast();
   const [data, setData] = useState<FilesData | null>(null);
@@ -35,7 +47,13 @@ export default function FilesTab() {
         <EmptyState text={`加载失败：${err}`} icon="⚠️" />
       </HoloCard>
     );
-  if (!data) return null;
+  if (!data)
+    return (
+      <div className="flex items-center justify-center py-16 text-sm text-white/40">
+        <span className="mr-2 inline-block h-2 w-2 animate-pulse rounded-full bg-[var(--holo-c2)] shadow-[0_0_10px_var(--glow-btn)]" />
+        正在加载文件列表…
+      </div>
+    );
 
   return (
     <div className="space-y-4">
@@ -63,6 +81,7 @@ export default function FilesTab() {
                 <th className="px-4 py-3 text-left font-semibold">大小</th>
                 <th className="px-4 py-3 text-left font-semibold">状态</th>
                 <th className="px-4 py-3 text-left font-semibold">问题数</th>
+                <th className="px-4 py-3 text-left font-semibold">AI 核验</th>
                 <th className="px-4 py-3 text-left font-semibold">路径</th>
               </tr>
             </thead>
@@ -88,6 +107,9 @@ export default function FilesTab() {
                       )}
                     </td>
                     <td className="px-4 py-3 font-bold">{r.active_issue_count}</td>
+                    <td className="px-4 py-3">
+                      <AiBadge r={r} />
+                    </td>
                     <td className="max-w-[220px] truncate px-4 py-3 text-xs text-white/40" title={r.file_path}>
                       {r.file_path}
                     </td>

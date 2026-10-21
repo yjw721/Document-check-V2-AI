@@ -10,7 +10,13 @@ venv/
 reports/
 tests/out/
 tests/_tpl/
+tests/_tmp_e2e/
+tests/samples/
+_shots/
+cache/
+logs/
 *.log
+*.err
 
 # 运行时配置备份
 config/settings.json
@@ -22,6 +28,7 @@ config/ai_memory/
 config/ai_refs/
 
 # Node / Web
+node_modules/
 web/node_modules/
 web/dist/
 

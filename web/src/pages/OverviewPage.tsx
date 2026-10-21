@@ -32,7 +32,14 @@ export default function OverviewPage() {
       </HoloCard>
     );
   }
-  if (!data) return null;
+  if (!data) {
+    return (
+      <div className="flex items-center justify-center py-16 text-sm text-white/40">
+        <span className="mr-2 inline-block h-2 w-2 animate-pulse rounded-full bg-[var(--holo-c2)] shadow-[0_0_10px_var(--glow-btn)]" />
+        正在加载总览数据…
+      </div>
+    );
+  }
 
   const s = data.summary;
   const bt = s.by_type;

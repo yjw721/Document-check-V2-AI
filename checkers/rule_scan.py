@@ -311,31 +311,42 @@ def scan_all(progress: Optional[Callable[[float, str, str], bool]] = None) -> Di
     """扫描全部来源，返回分类结果（items 含定位信息与清理标记）。
 
     progress: 可选进度钩子 (percent 0-100, stage key, 日志文本) -> bool。
+    stage key 必须为前端识别的阶段：parse/page/format_error/fluency/wordbank/summary/ai
     """
-    def _hook(pct: float, log: str = "") -> None:
+    # 扫描阶段映射到前端可识别的阶段
+    SCAN_STAGE_MAP = {
+        "start": "parse",
+        "custom_rules": "format_error",
+        "wordbanks": "wordbank",
+        "dictionary": "format_error",
+        "summary": "summary",
+    }
+
+    def _hook(pct: float, stage_key: str, log: str = "") -> None:
         if progress:
             try:
-                progress(pct, "scan", log)
+                mapped_stage = SCAN_STAGE_MAP.get(stage_key, "format_error")
+                progress(pct, mapped_stage, log)
             except Exception:  # noqa: BLE001 - 进度回调异常不阻断
                 pass
 
-    _hook(6, "开始扫描全部规则与词库…")
+    _hook(6, "start", "开始扫描全部规则与词库…")
     suggestions = _collect_suggestions()
     ctx: Dict[str, Any] = {"pat_map": {}, "kw_map": {}, "line_map": {}}
 
-    _hook(18, "扫描自定义校验规则（config/custom_rules.json）…")
+    _hook(18, "custom_rules", "扫描自定义校验规则（config/custom_rules.json）…")
     rule_items = _scan_custom_rules(suggestions, ctx)
 
-    _hook(40, "扫描自定义词库（config/wordbanks.json）…")
+    _hook(40, "wordbanks", "扫描自定义词库（config/wordbanks.json）…")
     entry_items = _scan_wordbanks(suggestions, ctx)
 
     dict_items: List[Dict[str, Any]] = []
     total_files = len(DICT_META)
     for i, m in enumerate(DICT_META, 1):
-        _hook(42 + int(58 * i / max(total_files, 1)),
+        _hook(42 + int(58 * i / max(total_files, 1)), "dictionary",
               f"扫描内置词库 {i}/{total_files}：{m['title']}（{m['file']}）…")
         dict_items.extend(_scan_dictionary_file(m["file"], m["title"], ctx))
-    _hook(100, "全部来源扫描完成，正在汇总…")
+    _hook(100, "summary", "全部来源扫描完成，正在汇总…")
 
     items = rule_items + entry_items + dict_items
     invalid = sum(1 for it in items if it["category"] == "invalid")

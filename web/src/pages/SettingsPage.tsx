@@ -3,6 +3,7 @@ import HoloCard from "../components/ui/HoloCard";
 import HoloButton from "../components/ui/HoloButton";
 import HoloModal from "../components/ui/HoloModal";
 import HoloSwitch from "../components/ui/HoloSwitch";
+import { HoloSelect } from "../components/ui/HoloInput";
 import StatCard from "../components/common/StatCard";
 import SectionTitle from "../components/common/SectionTitle";
 import { api } from "../lib/api";
@@ -71,8 +72,24 @@ export default function SettingsPage() {
 
   /* 当前应用角色（管理员 / 普通用户）：控制后台模块可见性 */
   const [role, setRoleState] = useState<"admin" | "user">("admin");
+  const [sec, setSec] = useState<{ access_token: string; listen: string }>({
+    access_token: "",
+    listen: "127.0.0.1",
+  });
+  const [secBusy, setSecBusy] = useState(false);
+  const [showToken, setShowToken] = useState(false);
   useEffect(() => {
-    api.settings().then((st) => setRoleState(st.role === "user" ? "user" : "admin")).catch(() => {});
+    api
+      .settings()
+      .then((st) => {
+        setRoleState(st.role === "user" ? "user" : "admin");
+        const sc = (st as { security?: { access_token?: string; listen?: string } }).security || {};
+        setSec({
+          access_token: typeof sc.access_token === "string" ? sc.access_token : "",
+          listen: typeof sc.listen === "string" && sc.listen ? sc.listen : "127.0.0.1",
+        });
+      })
+      .catch(() => {});
   }, []);
   const setRole = async (r: "admin" | "user") => {
     setRoleState(r);
@@ -82,6 +99,18 @@ export default function SettingsPage() {
       toast(r === "user" ? "已切换为普通用户：AI 配置等后台模块已隐藏" : "已切换为管理员：后台模块可见");
     } catch (e) {
       toast((e as Error).message, "err");
+    }
+  };
+  const saveSecurity = async () => {
+    setSecBusy(true);
+    try {
+      const cur = await api.settings();
+      await api.saveSettings({ ...cur, security: sec });
+      toast(sec.listen === "0.0.0.0" ? "已保存：重启服务后开放局域网（自动放行防火墙 8501）" : "已保存：重启服务后生效");
+    } catch (e) {
+      toast((e as Error).message, "err");
+    } finally {
+      setSecBusy(false);
     }
   };
 
@@ -174,6 +203,55 @@ export default function SettingsPage() {
               label={role === "admin" ? "管理员" : "普通用户"}
             />
           </div>
+        </div>
+      </HoloCard>
+
+      {/* 访问安全（多用户 / 局域网共享） */}
+      <HoloCard className="p-6">
+        <div className="flex flex-wrap items-center gap-3">
+          <SectionTitle className="!mb-0">访问安全 · 多用户共享</SectionTitle>
+          <span className="text-xs text-white/45">单机默认无需配置；局域网多用户请先设置口令再开放端口</span>
+        </div>
+        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+          <div>
+            <div className="mb-1.5 text-xs text-white/60">访问口令（为空 = 免密，单机默认）</div>
+            <div className="relative">
+              <input
+                type={showToken ? "text" : "password"}
+                value={sec.access_token}
+                onChange={(e) => setSec({ ...sec, access_token: e.target.value })}
+                placeholder="留空表示不校验口令"
+                className="w-full rounded-2xl border border-white/10 bg-white/5 px-3 py-2.5 pr-14 text-sm text-white placeholder:text-white/55 backdrop-blur-xl transition-all outline-none hover:border-white/20 focus:border-[var(--border-accent)] focus:shadow-[0_0_20px_var(--glow-input)] focus:bg-white/[0.08]"
+              />
+              <button
+                type="button"
+                onClick={() => setShowToken((v) => !v)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg px-2 py-1 text-xs text-white/50 hover:bg-white/10 hover:text-white/80"
+              >
+                {showToken ? "隐藏" : "显示"}
+              </button>
+            </div>
+          </div>
+          <div>
+            <div className="mb-1.5 text-xs text-white/60">监听范围</div>
+            <HoloSelect
+              value={sec.listen}
+              onChange={(e) => setSec({ ...sec, listen: e.target.value })}
+            >
+              <option value="127.0.0.1" className="bg-[#161a2b]">仅本机（127.0.0.1）</option>
+              <option value="0.0.0.0" className="bg-[#161a2b]">局域网多用户（0.0.0.0）</option>
+            </HoloSelect>
+          </div>
+        </div>
+        <div className="mt-3 rounded-2xl border border-white/10 bg-white/[0.04] p-4 text-xs leading-relaxed text-white/50">
+          设置口令后，<b className="text-white/75">本机与局域网任何用户打开页面都需输入口令</b>才能使用（防他人读取/删除检测数据）。
+          开放《0.0.0.0 监听》后重启服务即生效，程序会自动放行 Windows 防火墙入站 TCP 8501（Linux/防火墙受阻时需管理员手动放行）。
+          局域网访问地址：<code className="rounded bg-white/10 px-1.5 py-0.5 text-[var(--tone-primary)]">http://&lt;本机局域网IP&gt;:8501</code>
+        </div>
+        <div className="mt-4 flex justify-end">
+          <HoloButton size="sm" disabled={secBusy} onClick={saveSecurity}>
+            {secBusy ? "保存中…" : "保存设置"}
+          </HoloButton>
         </div>
       </HoloCard>
 

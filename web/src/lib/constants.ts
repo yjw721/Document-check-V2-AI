@@ -6,6 +6,8 @@ export const NAV = [
   { key: "overview", name: "总览面板", ic: "📊" },
   { key: "detection", name: "检测管理", ic: "🔍" },
   { key: "unified", name: "规则与词库统一管理", ic: "🗄️" },
+  { key: "kb", name: "本地知识库问答", ic: "📚" },
+  /* 资产评估智能核查（valuation）已隐藏；保留页面与 API 以备后续启用 */
   { key: "aiconfig", name: "AI 配置", ic: "⚙️" },
   { key: "admin", name: "后台设置", ic: "🛡️" },
   { key: "settings", name: "缓存与系统", ic: "🗂️" },

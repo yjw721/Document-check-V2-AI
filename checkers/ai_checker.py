@@ -25,10 +25,12 @@ import hashlib
 import json
 import os
 import re
+import socket
 import threading
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from checkers.base import Issue, clip
@@ -43,6 +45,19 @@ _REF_LOCK = threading.Lock()
 # AI 核验问题条目统一规则键 / 标题
 AI_RULE_KEY = "ai_verify"
 AI_RULE_TITLE = "AI 智能核验"
+
+# AI 问题类别写入 Issue.tag（category 字段保留给自定义规则，避免语义冲突）
+AI_CATEGORY_MAP = {
+    "用词不当": "用词不当", "句型语病": "句型语病", "错别字": "错别字",
+    "数据错误": "数据错误", "表格计算": "表格计算", "逻辑矛盾": "逻辑矛盾",
+    "内容缺失": "内容缺失", "规范不符": "规范不符", "其他": "其他",
+}
+
+# 本地 Ollama 流式调用超时下限（秒）
+# CPU 机型 + qwen3 等 thinking 模型首 token 慢、整段推理可达 2 分钟以上；
+# 若按用户配置的 60 秒硬超时，本地长文本几乎必然被误判为「连接失败 / 超时」。
+# 故本地模式单次调用超时统一放宽到该下限（用户配置更小时自动提升）。
+_LOCAL_TIMEOUT_FLOOR = 300.0
 
 # 全局信号量：本地/在线模型并发上限（本地模型串行最稳，避免排队打爆）
 _AI_SEM = threading.Semaphore(1)
@@ -156,6 +171,15 @@ DEFAULTS: Dict[str, Any] = {
     "max_requests": 10,
     "ref_enabled": True,
     "ref_max_chars": 2000,
+    # 增强审核力度：deep_review 开启后每段追加一轮「补漏复核」请求（耗时约翻倍）
+    "deep_review": True,
+    # 严格取证：收紧引用命中阈值，丢弃把握度低于阈值的问题
+    "strict_grounding": True,
+    "min_confidence": 0.6,
+    # 专项技能（SKILL）：active_skills = 启用的技能 id 集合；custom_skills = 用户自定义技能库。
+    # None 表示未显式配置，运行时自动启用所有内置 default_on 技能。
+    "active_skills": None,
+    "custom_skills": [],
 }
 
 # ---------------------------------------------------------------------------
@@ -198,30 +222,67 @@ def resolve_local_model(cfg: Dict[str, Any]) -> Tuple[str, str]:
     return models[0], f"本地模型已自动同步为「{models[0]}」（原配置「{model}」不在本机）"
 
 _SYS_PROMPT = (
-    "你是一名极其严谨的文档质量核查专家。请对给出的【文档片段】做全方位核查，"
-    "但必须严格基于片段中实际存在的内容，不得臆测、不得引入片段之外的信息。\n"
-    "核查维度（全部覆盖，发现任何确凿问题都要指出）：\n"
-    "1. 用词不当：错别字 / 同音形近字错误、口语化或不规范措辞、术语误用、词义重复啰嗦；\n"
-    "2. 句型语病：语法错误、成分残缺 / 搭配不当、句式杂糅、语序混乱、指代不明、标点误用致歧义；\n"
-    "3. 数据不正确：前后数字矛盾、与常识明显不符的数值（金额 / 数量 / 面积 / 日期 / 比例不合常理）、"
-    "单位缺失或混用、表述含糊无法核对；\n"
-    "4. 表格计算错误：合计 / 小计 / 求和与分项数值不一致、占比与分项不匹配、跨行跨列勾稽关系错误"
-    "（必须逐项重新计算核对，明确指出是哪一行 / 哪一项、正确值应为多少）；\n"
-    "5. 逻辑与内容：前后矛盾、表意不清、逻辑不通、内容缺失、事实性错误；\n"
-    "6. 规范符合性：若提供了参考资料，须严格依据其核查，与标准不符即记为问题并注明所依据的标准条款。\n"
-    "严谨性要求（务必遵守，宁可漏报也不要误报）：\n"
-    "- 每条问题的 quote 必须是片段中【逐字出现】的原句 / 原词，严禁编造或改写后才引用；\n"
-    "- 仅当能从片段中直接举证时才报告；无法确证的问题不要输出；\n"
-    "- 数值 / 表格类问题必须在 detail 中展示计算过程（如『分项 80+120=200，但合计写为 300』）；\n"
+    "你是一名极其严谨的文档质量复核专家，承担文档归档前的终审职责。\n"
+    "【工作方式】逐句、逐单元格通读片段，禁止跳读与概括式浏览；遇到表格必须逐行逐列"
+    "重新计算，不得凭印象判断；读到数值、日期、金额、比例时必须与片段其它位置交叉核对。\n"
+    "【核查维度】以下 9 类必须全部覆盖，发现任何确凿问题都要指出：\n"
+    "1. 错别字：同音 / 形近字误用、多字漏字、重字、繁简混用；\n"
+    "2. 用词不当：口语化表述、术语误用、词义重复啰嗦、褒贬与语体不符、称谓不统一；\n"
+    "3. 句型语病：语法错误、成分残缺、搭配不当、句式杂糅、语序混乱、指代不明；\n"
+    "4. 标点与格式：标点误用致歧义、中英文标点混用、编号层级错乱、空格与换行异常；\n"
+    "5. 数据错误：前后数字矛盾、金额 / 数量 / 面积 / 日期 / 比例不合常理、单位缺失或混用、"
+    "大写金额与小写金额不一致、数字位数或小数点错位、表述含糊无法核对；\n"
+    "6. 表格计算：合计 / 小计 / 求和与分项不符、占比与分项不匹配、跨行跨列及跨表勾稽错误"
+    "（必须逐项重算，写明『哪项 + 哪项 = 应得值，文中写为 X』，并指出是哪一行 / 哪一项）；\n"
+    "7. 交叉一致性：同一主体（名称 / 编号 / 日期 / 金额 / 单位 / 口径）在片段内不同位置"
+    "出现时必须一致，前后称谓、口径、时点必须统一；\n"
+    "8. 逻辑与内容：前后矛盾、因果不成立、表意不清、逻辑不通、内容缺失、事实性错误；\n"
+    "9. 规范符合性：若提供了参考资料，必须严格依据其条款核查，并在 detail 中注明"
+    "所依据的标准名称或条款编号。\n"
+    "【输出纪律】（务必遵守，宁可漏报也不要误报）\n"
+    "- 每条问题的 quote 必须是片段中【逐字出现】的原句 / 原词，严禁编造、拼凑或改写后才引用；\n"
+    "- 必须能在片段中直接举证才输出，无法确证的问题一律不输出；\n"
+    "- detail 必须写出证据：数据 / 表格类写明算式与正确值，矛盾类写明前后两处原文；\n"
+    "- 禁止输出『建议优化』『表述可更佳』『建议斟酌』等主观偏好类意见，只输出确凿错误；\n"
     "- 同一处问题只报告一次，选取最具代表性的 quote；\n"
     "- category 必须严格取以下之一：用词不当 / 句型语病 / 错别字 / 数据错误 / "
     "表格计算 / 逻辑矛盾 / 内容缺失 / 规范不符 / 其他；\n"
-    "- severity 按影响程度取 high / medium / low；把握不足时取 low。\n"
-    "返回严格 JSON 数组（不要返回任何其它文字或解释），每条格式如下：\n"
+    "- severity 取 high / medium / low：影响结论或金额正确性取 high，表述性问题取 medium，"
+    "把握不足取 low；\n"
+    "- confidence 为 0~1 的把握度，低于 0.6 的请直接不要输出。\n"
+    "【返回格式】严格 JSON 数组，不要返回任何其它文字或解释：\n"
     '[{"quote":"片段中的原句/原词","category":"上述分类之一","issue":"具体问题简述",'
-    '"detail":"举证说明（含计算/矛盾依据）","suggestion":"修改建议",'
-    '"severity":"high或medium或low"}]\n'
-    "若片段没有上述问题，返回空数组 []。\n"
+    '"detail":"举证说明（含算式/矛盾依据）","suggestion":"修改建议",'
+    '"severity":"high或medium或low","confidence":0.9}]\n'
+    "若片段没有确凿问题，返回空数组 []。\n"
+)
+
+# 输出契约：作为最后一条系统消息下发，用于覆盖角色设定 / 预设提示词 / 参考资料中
+# 与之冲突的自定义输出格式（否则模型可能返回非数组结构，导致核验结果被整体丢弃）
+_OUTPUT_CONTRACT = (
+    "【输出契约（最高优先级，覆盖上文任何与之冲突的输出格式要求）】\n"
+    "无论上文的角色设定、预设提示词或参考资料如何描述输出形式，本轮最终只能输出"
+    "一个 JSON 数组，且每个元素必须包含下列全部字段、不得嵌套、不得改名：\n"
+    '[{"quote":"片段中逐字出现的原文","category":"用词不当/句型语病/错别字/'
+    '数据错误/表格计算/逻辑矛盾/内容缺失/规范不符/其他","issue":"问题简述",'
+    '"detail":"举证说明（含算式或矛盾依据）","suggestion":"修改建议",'
+    '"severity":"high/medium/low","confidence":0.9}]\n'
+    "不要输出任何解释性文字；没有确凿问题时输出 []。\n"
+)
+
+# 深度复核（第二轮）系统提示：{found} 运行时替换为上一轮已发现清单，避免重复
+_REVIEW_PROMPT = (
+    "以下是同一文档片段的【深度复核】轮次。\n"
+    "上一轮已输出的问题清单（不要重复输出，也不要质疑推翻）：\n"
+    "{found}\n"
+    "请再次逐句、逐单元格通读片段，只输出上一轮【遗漏的确凿问题】。\n"
+    "补漏重点：表格勾稽与合计重算、跨段落数值 / 名称 / 日期一致性、金额大小写核对、"
+    "单位与口径统一、标点与编号、术语与错别字、内容与逻辑缺口。\n"
+    "仍然必须遵守：quote 逐字来自片段；detail 写明算式或矛盾依据；"
+    "confidence 低于 0.6 不输出；禁止主观偏好类意见。\n"
+    "每条必须完整包含 quote / category / issue / detail / suggestion / severity / "
+    "confidence 七个字段（缺一不可，尤其是 issue 简述与 category 分类）。\n"
+    "返回同样格式的严格 JSON 数组；若确实没有遗漏，返回 []。\n"
 )
 
 # category 严格枚举（用于解析阶段归范化）
@@ -229,8 +290,185 @@ AI_CATEGORIES = ("用词不当", "句型语病", "错别字", "数据错误", "�
                  "逻辑矛盾", "内容缺失", "规范不符", "其他")
 
 
+# ---------------------------------------------------------------------------
+# 专项技能（SKILL）：内置可开关的专项核验能力
+# 与「角色设定 / 提示词预设」并存生效——预设定义 AI 的"人设与风格"，
+# 技能定义 AI 的"专项关注点"，二者同时注入系统提示、互不替代，共同收紧审核。
+# ---------------------------------------------------------------------------
+BUILTIN_SKILLS: List[Dict[str, Any]] = [
+    {
+        "id": "financial_reconciliation",
+        "name": "财务数据勾稽",
+        "description": "核查金额、比例、合计与跨表勾稽、大小写金额一致、单位/币种/口径统一。",
+        "prompt": (
+            "【专项技能·财务数据勾稽】额外重点核查：同一科目/项目在片段内不同位置的金额、数量、"
+            "面积、比例是否一致；合计、小计、求和与分项是否相符；占比与分项是否匹配；"
+            "大写金额与小写金额是否一致（例如「壹拾贰万元整」须对应 ¥120,000.00）；"
+            "跨行、跨列及跨表勾稽关系（必须逐项重算，并写明『哪项 + 哪项 = 应得值，文中写为 X』）；"
+            "单位、币种、口径前后是否统一。"
+        ),
+        "default_on": True,
+    },
+    {
+        "id": "terminology_consistency",
+        "name": "术语与口径一致性",
+        "description": "全文专业术语、单位、称谓、时点、统计口径统一，避免同物异名。",
+        "prompt": (
+            "【专项技能·术语与口径一致性】额外重点核查：同一概念/主体在片段内是否使用统一术语与称谓"
+            "（避免同物异名、前后称谓不一致）；计量单位、币种、时点、统计口径是否前后统一；"
+            "专有名词、缩写、机构名称、文件编号是否前后一致；避免使用口语化或模糊代称指代关键主体。"
+        ),
+        "default_on": True,
+    },
+    {
+        "id": "legal_compliance",
+        "name": "法律与规范符合性",
+        "description": "核查强制性规范、资质、条款引用、合规表述，避免违规或无效表述。",
+        "prompt": (
+            "【专项技能·法律与规范符合性】额外重点核查：是否出现与现行法规/行业强制性规范相悖的表述；"
+            "引用法规、标准、条款时名称与编号是否准确、是否过时或废止；资质、许可、有效期等关键合规要素"
+            "是否齐全且未超期；是否存在可能带来法律风险的绝对化、承诺性、误导性表述。"
+        ),
+        "default_on": False,
+    },
+    {
+        "id": "sensitive_info",
+        "name": "涉密与敏感信息",
+        "description": "识别不应外发的个人信息、商业秘密、密级标识等敏感内容。",
+        "prompt": (
+            "【专项技能·涉密与敏感信息】额外重点核查：是否含有不应在此文档中出现的个人敏感信息"
+            "（身份证号、手机号、住址、银行账户等）、商业秘密或未公开经营数据；是否误带密级标识"
+            "（如『机密』『秘密』）或内部代号；对外发文是否可能泄露内部口径或暂未公开事项。"
+        ),
+        "default_on": False,
+    },
+    {
+        "id": "citation_integrity",
+        "name": "引用标注完整性",
+        "description": "核查数据出处、引文来源、脚注与参考文献可追溯、不缺失。",
+        "prompt": (
+            "【专项技能·引用标注完整性】额外重点核查：文中引用的数据、结论、法规、外部观点是否标注可溯源的"
+            "出处；脚注、尾注、参考文献是否完整且与正文引用一一对应；是否存在『据资料显示』等无出处表述；"
+            "引用的来源是否真实可信、与所支撑的结论匹配。"
+        ),
+        "default_on": False,
+    },
+    {
+        "id": "format_typography",
+        "name": "格式与排版规范",
+        "description": "核查编号层级、标题样式、字体字号统一、目录页码等排版规范。",
+        "prompt": (
+            "【专项技能·格式与排版规范】额外重点核查：章节编号层级是否连续、是否错层或重号；"
+            "标题样式、字体、字号、缩进是否前后统一；目录、页码、图表编号是否完整且对应；"
+            "列表、表格、断行是否规范；是否存在明显的排版错乱（如孤行、错位、空白异常）。"
+        ),
+        "default_on": False,
+    },
+]
+
+
+def _norm_ftype(ftype: str) -> str:
+    """将文件类型归一为技能过滤用的短标签：doc / xls / pdf / txt / 空。"""
+    f = (ftype or "").lower()
+    if "word" in f or f.endswith(".docx") or f.endswith(".doc"):
+        return "doc"
+    if "excel" in f or f.endswith((".xlsx", ".xls", ".csv")):
+        return "xls"
+    if "pdf" in f:
+        return "pdf"
+    if "txt" in f or "text" in f:
+        return "txt"
+    return ""
+
+
+def get_active_skill_list(ai: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """返回当前启用的专项技能（内置 + 自定义）统一字段列表：
+    id, name, prompt, description, file_types, default_severity, builtin
+    """
+    active = ai.get("active_skills")
+    if active is None:  # 未配置：自动启用所有内置 default_on 技能
+        active = [s["id"] for s in BUILTIN_SKILLS if s.get("default_on")]
+    active_set = set(active or [])
+    out: List[Dict[str, Any]] = []
+    for s in BUILTIN_SKILLS:
+        if s["id"] in active_set:
+            out.append({
+                "id": s["id"], "name": s["name"], "prompt": s.get("prompt", ""),
+                "description": s.get("description", ""), "file_types": "all",
+                "default_severity": "", "builtin": True,
+            })
+    for c in (ai.get("custom_skills") or []):
+        if not isinstance(c, dict) or not c.get("id"):
+            continue
+        if c["id"] in active_set:
+            out.append({
+                "id": c["id"], "name": c.get("name", "自定义技能"),
+                "prompt": c.get("prompt", ""), "description": c.get("description", ""),
+                "file_types": (c.get("file_types") or "all"),
+                "default_severity": c.get("default_severity", ""), "builtin": False,
+            })
+    return out
+
+
+def build_skill_section(ai: Dict[str, Any], ftype: str = "") -> str:
+    """构造专项技能的系统提示片段（按文件类型过滤）；无启用技能返回空串。"""
+    skills = get_active_skill_list(ai)
+    if not skills:
+        return ""
+    token = _norm_ftype(ftype)
+    parts: List[str] = []
+    for s in skills:
+        ft = (s.get("file_types") or "all").lower()
+        if ft != "all" and token:
+            if token not in [t.strip() for t in ft.split(",")]:
+                continue
+        prompt = (s.get("prompt") or "").strip()
+        if not prompt:
+            continue
+        name = s.get("name", "专项技能")
+        sev = (s.get("default_severity") or "").strip()
+        sev_hint = f"（本技能发现的问题建议标注为 {sev} 严重度）" if sev else ""
+        parts.append(f"■ {name}：{prompt}{sev_hint}")
+    if not parts:
+        return ""
+    return ("【专项技能核验】本次核验额外启用以下专项技能，请在每个文档片段中额外关注这些维度；"
+            "发现确凿问题仍按输出契约的字段与格式输出"
+            "（category 取最匹配的标准分类，必要时用「其他」）：\n" + "\n".join(parts))
+
+
 class AiError(Exception):
     """AI 调用失败（连接 / 超时 / 响应异常）。"""
+
+
+def _is_timeout_like(exc: BaseException) -> bool:
+    """判断底层异常是否属于超时（socket.timeout / TimeoutError / 含 timeout 描述）。"""
+    if isinstance(exc, (TimeoutError, socket.timeout)):
+        return True
+    reason = getattr(exc, "reason", exc)
+    if isinstance(reason, (TimeoutError, socket.timeout)):
+        return True
+    s = str(reason).lower()
+    return "timed out" in s or "timeout" in s
+
+
+def _timeout_msg(seconds: float) -> str:
+    """超时故障的可操作中文提示（区分本地/联网由调用方补充说明）。"""
+    secs = int(seconds)
+    return (f"AI 响应超时（已等待约 {secs} 秒）：模型处理过慢或服务无响应。"
+            f"本机 CPU 推理建议将「单次超时」调大（本地模式已自动放宽至不小于 5 分钟），"
+            f"或减小「每段字数上限」；若多次出现请确认 Ollama 已启动、模型已就绪")
+
+
+def _net_reason(exc: BaseException, timeout: float = 0.0) -> str:
+    """把底层网络异常转换为可操作的中文提示（区分超时 / 连接拒绝 / 其它）。"""
+    if _is_timeout_like(exc):
+        return _timeout_msg(timeout or 0) if timeout else "AI 响应超时：模型处理过慢或服务无响应"
+    reason = getattr(exc, "reason", exc)
+    s = str(reason)
+    if "Connection refused" in s or isinstance(reason, ConnectionRefusedError):
+        return ("无法连接 AI 服务（连接被拒绝）：请确认本地 Ollama 已启动（ollama serve），"
+                "或检查联网 AI 的接口地址与 API Key 是否正确")
+    return f"连接失败：{s}"
 
 
 def _http_json(url: str, payload: Dict[str, Any], headers: Dict[str, str],
@@ -250,8 +488,10 @@ def _http_json(url: str, payload: Dict[str, Any], headers: Dict[str, str],
         except Exception:  # noqa: BLE001
             pass
         raise AiError(f"HTTP {exc.code}：{body or exc.reason}") from exc
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        raise AiError(f"连接失败：{exc}") from exc
+    except (TimeoutError, socket.timeout):
+        raise AiError(_timeout_msg(timeout)) from None
+    except (urllib.error.URLError, OSError) as exc:
+        raise AiError(_net_reason(exc, timeout)) from exc
     try:
         return json.loads(raw)
     except json.JSONDecodeError as exc:
@@ -297,13 +537,20 @@ def _call_ollama(cfg: Dict[str, Any], messages: List[Dict[str, str]],
         payload["options"] = opts
     if on_token:
         return _call_ollama_stream(url, payload, on_token,
-                                   float(cfg.get("timeout") or DEFAULTS["timeout"]))
-    resp = _http_json(url, payload, {}, float(cfg.get("timeout") or DEFAULTS["timeout"]))
+                                   _ollama_eff_timeout(cfg))
+    resp = _http_json(url, payload, {}, _ollama_eff_timeout(cfg))
     msg = resp.get("message") or {}
     content = msg.get("content")
     if not isinstance(content, str):
         raise AiError(f"Ollama 响应缺少 message.content：{str(resp)[:120]}")
     return content
+
+
+def _ollama_eff_timeout(cfg: Dict[str, Any]) -> float:
+    """本地 Ollama 有效超时：用户配置过小时自动放宽（CPU 推理首 token 慢）。
+    返回 (有效超时秒数)。"""
+    t = float(cfg.get("timeout") or DEFAULTS["timeout"])
+    return max(t, _LOCAL_TIMEOUT_FLOOR)
 
 
 def _call_ollama_stream(url: str, payload: Dict[str, Any],
@@ -313,13 +560,20 @@ def _call_ollama_stream(url: str, payload: Dict[str, Any],
     chunk 结构：{"message":{"content":"...","thinking":"..."}}。
     qwen3 等 thinking 模型启用 think=True 时 thinking 字段先行输出，
     非思考模型只有 content。返回拼接后的完整 content。
+
+    timeout 为「总预算」：同时作用于 socket 读超时与墙钟截止线，
+    超时按故障分类为可操作的超时提示，而非笼统的「连接失败」。
     """
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
     buf: List[str] = []
+    deadline = time.monotonic() + float(timeout)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=float(timeout)) as resp:
+            _set_sock_read_timeout(resp, float(timeout))
             for raw in resp:
+                if time.monotonic() > deadline:
+                    raise AiError(_timeout_msg(float(timeout)))
                 line = raw.decode("utf-8", errors="replace").strip()
                 if not line:
                     continue
@@ -344,9 +598,29 @@ def _call_ollama_stream(url: str, payload: Dict[str, Any],
         except Exception:  # noqa: BLE001
             pass
         raise AiError(f"HTTP {exc.code}：{body or exc.reason}") from exc
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        raise AiError(f"连接失败：{exc}") from exc
+    except AiError:
+        raise
+    except (TimeoutError, socket.timeout):
+        raise AiError(_timeout_msg(float(timeout))) from None
+    except (urllib.error.URLError, OSError) as exc:
+        raise AiError(_net_reason(exc, float(timeout))) from exc
     return "".join(buf)
+
+
+def _set_sock_read_timeout(resp, seconds: float) -> None:
+    """尽力将 http.client 底层 socket 读超时设为剩余预算（版本差异容错）。
+
+    目标：把「单次读最多等 timeout 秒」变成「每次读到数据即可续命」，
+    配合 _call_ollama_stream 的墙钟截止线实现整体预算式超时。
+    """
+    try:
+        fp = getattr(resp, "fp", None) or getattr(resp, "raw", None)
+        sock = getattr(getattr(fp, "raw", None), "_sock", None)
+        if sock is None:
+            sock = getattr(fp, "_sock", None) or fp
+        sock.settimeout(seconds)
+    except Exception:  # noqa: BLE001 - socket 内部结构差异不影响主流程
+        pass
 
 
 def _call_openai(cfg: Dict[str, Any], messages: List[Dict[str, str]]) -> str:
@@ -388,11 +662,23 @@ def _norm_text(s: str) -> str:
     return re.sub(r"[^\w]", "", str(s or ""))
 
 
+# 引用命中的最小连续字符数（严格取证模式下为 10，宽松模式回退为 8）
+_QUOTE_MIN_HIT = 10
+
+
+def set_strict_grounding(on: bool) -> None:
+    """切换严格取证阈值（供后台设置 / 测试调用）。"""
+    global _QUOTE_MIN_HIT
+    _QUOTE_MIN_HIT = 10 if on else 8
+
+
 def _quote_grounded(quote: str, source: str) -> bool:
     """判断模型引用的 quote 是否确实出现在原文中（防幻觉）。
 
-    允许模型在引用时略有标点 / 空格差异：要求 quote 的归一化全文命中，
-    或其任意 8 字连续片段命中原文（足以证明不是凭空编造）。
+    允许模型在引用时略有标点 / 空格差异：要求 quote 的归一化全文命中；
+    否则要求存在长度不小于 _QUOTE_MIN_HIT 的连续片段命中原文。
+    阈值由 8 提升到 _QUOTE_MIN_HIT（默认 10），短引用必须整段命中，
+    避免仅凭少量字符的偶然重合就让编造引用通过。
     """
     if not quote or not source:
         return True
@@ -402,60 +688,239 @@ def _quote_grounded(quote: str, source: str) -> bool:
         return False
     if q in s:
         return True
-    if len(q) > 8:
-        for i in range(0, len(q) - 7):
-            if q[i:i + 8] in s:
-                return True
+    need = min(_QUOTE_MIN_HIT, len(q))
+    if len(q) < need:
+        return False
+    for i in range(0, len(q) - need + 1):
+        if q[i:i + need] in s:
+            return True
     return False
 
 
-def _parse_issues(content: str, source: str = "") -> List[Dict[str, Any]]:
-    """从模型输出中提取 JSON 数组（容忍 ```json 包裹与前后缀文本）。
+# 字段别名：兼容模型或用户预设提示词驱动出的多样化字段名
+_FIELD_ALIASES: Dict[str, Tuple[str, ...]] = {
+    "quote": ("quote", "原文", "引用", "原文片段", "问题原文", "片段", "出处"),
+    "issue": ("issue", "问题简述", "错误描述", "问题说明", "问题", "错误", "标题", "title"),
+    "detail": ("detail", "举证", "举证说明", "依据", "说明", "描述", "详细",
+               "evidence", "desc", "detail_desc"),
+    "suggestion": ("suggestion", "修改建议", "整改建议", "处理建议", "建议"),
+    "category": ("category", "分类", "类别", "错误类型", "问题类型", "类型"),
+    "severity": ("severity", "严重级别", "严重程度", "级别", "等级"),
+    "confidence": ("confidence", "置信度", "把握度", "把握"),
+}
 
-    source 为当前片段原文，用于校验 quote 是否真实存在（避免模型编造引用）；
-    分类不在枚举内时归范到最接近项，重复条目（同 quote+issue）去重。
-    """
-    text = content.strip()
-    start = text.find("[")
-    end = text.rfind("]")
-    if start == -1 or end == -1 or end <= start:
-        return []
+# 严重级别别名
+_SEV_ALIASES: Tuple[Tuple[str, str], ...] = (
+    ("严重", "high"), ("高", "high"), ("high", "high"),
+    ("一般", "medium"), ("中", "medium"), ("medium", "medium"),
+    ("轻微", "low"), ("低", "low"), ("low", "low"),
+)
+
+
+def _pick(node: Dict[str, Any], keys: Tuple[str, ...]) -> str:
+    """按别名顺序取第一个非空字符串值（跳过 bool / 容器）。"""
+    for k in keys:
+        if k not in node:
+            continue
+        v = node.get(k)
+        if isinstance(v, bool) or v is None:
+            continue
+        if isinstance(v, (str, int, float)):
+            s = str(v).strip()
+            if s:
+                return s
+    return ""
+
+
+def _to_float(s: str) -> Optional[float]:
     try:
-        arr = json.loads(text[start:end + 1])
+        return float(str(s).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _norm_severity(s: str) -> str:
+    v = str(s or "").strip().lower()
+    for key, val in _SEV_ALIASES:
+        if v == key:
+            return val
+    for key, val in _SEV_ALIASES:
+        if key in v:
+            return val
+    return "medium"
+
+
+def _brief(s: str, n: int = 40) -> str:
+    """把长描述压成一句简述（按句读截断）。"""
+    s = str(s or "").strip()
+    for sep in ("。", "；", "\n", "，"):
+        p = s.find(sep)
+        if 0 < p < n:
+            return s[:p]
+    return s[:n]
+
+
+def _norm_map(s: str) -> Tuple[str, List[int]]:
+    """归一化文本并返回「归一化下标 -> 原文下标」映射，用于回译定位原文片段。"""
+    chars: List[str] = []
+    idxs: List[int] = []
+    for i, ch in enumerate(str(s or "")):
+        if re.match(r"\w", ch):
+            chars.append(ch)
+            idxs.append(i)
+    return "".join(chars), idxs
+
+
+def _locate_quote(text: str, source: str) -> str:
+    """当模型未给出 quote 时，从其举证文本中回译定位原文里真实存在的片段。
+
+    取满足最小命中长度的最长连续串并映射回原文；找不到返回 ""，该条目随后被丢弃，
+    以此保证「必须在原文中可举证」的底线不被绕过。
+    """
+    t, _ti = _norm_map(text)
+    s, si = _norm_map(source)
+    if not t or not s:
+        return ""
+    for n in range(len(t), _QUOTE_MIN_HIT - 1, -1):
+        for i in range(0, len(t) - n + 1):
+            pos = s.find(t[i:i + n])
+            if pos >= 0:
+                return str(source)[si[pos]: si[pos + n - 1] + 1]
+    return ""
+
+
+def _flatten_nodes(obj: Any, depth: int = 0) -> List[Dict[str, Any]]:
+    """递归收集 JSON 中所有字典节点（含嵌套），兼容非标准输出结构。"""
+    nodes: List[Dict[str, Any]] = []
+    if isinstance(obj, dict):
+        nodes.append(obj)
+        if depth < 4:
+            for v in obj.values():
+                if isinstance(v, (dict, list)):
+                    nodes.extend(_flatten_nodes(v, depth + 1))
+    elif isinstance(obj, list) and depth < 4:
+        for v in obj:
+            if isinstance(v, (dict, list)):
+                nodes.extend(_flatten_nodes(v, depth + 1))
+    return nodes
+
+
+def _node_to_item(node: Dict[str, Any], source: str,
+                  min_confidence: float) -> Optional[Dict[str, Any]]:
+    """把单个（可能来自嵌套结构的）字典节点归一化为标准问题条目；无效返回 None。"""
+    quote = _pick(node, _FIELD_ALIASES["quote"])
+    issue = _pick(node, _FIELD_ALIASES["issue"])
+    detail = _pick(node, _FIELD_ALIASES["detail"])
+    if not detail:
+        detail = issue
+    if not issue:
+        issue = _brief(detail)
+    if not issue and not detail:
+        return None
+    if len(issue) > 50:          # 模型把整段描述塞进 issue 时压成简述
+        issue = _brief(issue)
+    if len(_norm_text(issue)) < 3:
+        return None
+    # 引用取证：优先用模型给出的 quote，缺失时从举证文本回译定位，仍无则丢弃
+    if not quote:
+        quote = _locate_quote(detail if len(detail) >= len(issue) else issue, source)
+    if not quote or (source and not _quote_grounded(quote, source)):
+        return None
+    conf = _to_float(_pick(node, _FIELD_ALIASES["confidence"]))
+    if conf is not None and conf < min_confidence:
+        return None
+    cat = _pick(node, _FIELD_ALIASES["category"])
+    if not cat and ("条款" in node or "标准" in node or "准则" in node):
+        cat = "规范不符"
+    if cat not in AI_CATEGORIES:
+        cat = next((c for c in AI_CATEGORIES if c and c in cat), "其他")
+    sev = _norm_severity(_pick(node, _FIELD_ALIASES["severity"]))
+    if sev == "high" and not detail:
+        sev = "medium"
+    return {
+        "quote": clip(quote, 120),
+        "category": cat,
+        "issue": issue,
+        "detail": detail,
+        "suggestion": _pick(node, _FIELD_ALIASES["suggestion"]),
+        "severity": sev,
+        "confidence": conf,
+    }
+
+
+def _extract_json(text: str) -> Any:
+    """从模型输出中提取【最外层】JSON 结构。
+
+    依次尝试：整体解析 → 去掉 ``` 代码围栏后解析 → 从首个括号起做平衡匹配解析。
+    不能再用「首个 [ 到最后一个 ]」的朴素截取：模型返回顶层对象且内部含数组时
+    会误抓内层数组，导致真正的问题条目被整体丢弃。
+    """
+    t = (text or "").strip()
+    if t.startswith("```"):
+        nl = t.find("\n")
+        if nl != -1:
+            t = t[nl + 1:]
+        t = t.rstrip()
+        if t.endswith("```"):
+            t = t[:-3]
+        t = t.strip()
+    try:
+        return json.loads(t)
     except json.JSONDecodeError:
-        return []
-    if not isinstance(arr, list):
+        pass
+    start = -1
+    for i, ch in enumerate(t):
+        if ch in "{[":
+            start = i
+            break
+    if start == -1:
+        return None
+    depth, in_str, esc = 0, False, False
+    for i in range(start, len(t)):
+        ch = t[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch in "{[":
+            depth += 1
+        elif ch in "}]":
+            depth -= 1
+            if depth == 0:
+                try:
+                    return json.loads(t[start:i + 1])
+                except json.JSONDecodeError:
+                    return None
+    return None
+
+
+def _parse_issues(content: str, source: str = "", min_confidence: float = 0.6) -> List[Dict[str, Any]]:
+    """从模型输出中提取问题条目（容忍 ```json 包裹、顶层对象与嵌套结构）。
+
+    source 为当前片段原文，用于校验引用是否真实存在（避免模型编造）；
+    分类不在枚举内时归范到最接近项；重复条目（同 quote+issue）去重。
+    min_confidence > 0 时丢弃模型把握度低于阈值的条目（抑制误报）。
+    """
+    payload = _extract_json(content)
+    if payload is None:
         return []
     out: List[Dict[str, Any]] = []
     seen: set = set()
-    for it in arr:
-        if not isinstance(it, dict):
+    for node in _flatten_nodes(payload):
+        item = _node_to_item(node, source, min_confidence)
+        if not item:
             continue
-        quote = str(it.get("quote") or "").strip()
-        issue = str(it.get("issue") or "").strip()
-        if not quote or not issue:
-            continue
-        # 引用必须能在原文中找到，否则视为幻觉，丢弃以保证严谨
-        if not _quote_grounded(quote, source):
-            continue
-        sev = str(it.get("severity") or "medium")
-        if sev not in ("high", "medium", "low"):
-            sev = "medium"
-        cat = str(it.get("category") or "").strip()
-        if cat not in AI_CATEGORIES:
-            cat = next((c for c in AI_CATEGORIES if c and c in cat), "其他")
-        key = (_norm_text(quote), _norm_text(issue))
+        key = (_norm_text(item["quote"]), _norm_text(item["issue"]))
         if key in seen:
             continue
         seen.add(key)
-        out.append({
-            "quote": clip(quote, 120),
-            "category": cat,
-            "issue": issue,
-            "detail": str(it.get("detail") or "").strip(),
-            "suggestion": str(it.get("suggestion") or "").strip(),
-            "severity": sev,
-        })
+        out.append(item)
     return out
 
 
@@ -677,7 +1142,11 @@ def _load_ref_text(max_chars: int) -> str:
 # ---------------------------------------------------------------------------
 def _chunk_blocks(blocks: List[Tuple[str, str]], max_chars: int,
                   max_requests: int) -> List[Tuple[str, str]]:
-    """把文本块按 max_chars 合并分段，最多 max_requests 段。"""
+    """把文本块按 max_chars 合并分段，最多 max_requests 段。
+
+    容量不足（全文长度 > max_chars × max_requests）时不再只取最前面的 N 段，
+    而是对全篇做「首段 + 末段 + 等距抽样」的均匀覆盖，避免长文档尾部整段漏检。
+    """
     chunks: List[Tuple[str, str]] = []
     cur_loc, cur_text = "", []
     cur_len = 0
@@ -687,15 +1156,22 @@ def _chunk_blocks(blocks: List[Tuple[str, str]], max_chars: int,
         if cur_len + len(text) > max_chars and cur_text:
             chunks.append((cur_loc, "\n".join(cur_text)))
             cur_loc, cur_text, cur_len = "", [], 0
-            if len(chunks) >= max_requests:
-                break
         if not cur_text:
             cur_loc = loc
         cur_text.append(text)
         cur_len += len(text)
-    if cur_text and len(chunks) < max_requests:
+    if cur_text:
         chunks.append((cur_loc, "\n".join(cur_text)))
-    return chunks[:max_requests]
+    if not chunks or max_requests <= 1:
+        return chunks[:max(1, max_requests)]
+    if len(chunks) <= max_requests:
+        return chunks[:max_requests]
+    # 均匀抽样：首段与末段必检，其余按等距取样填满剩余配额
+    idxs = {0, len(chunks) - 1}
+    step = (len(chunks) - 1) / (max_requests - 1)
+    for i in range(max_requests):
+        idxs.add(int(round(i * step)))
+    return [chunks[i] for i in sorted(idxs)[:max_requests]]
 
 
 def ai_check_file(path: str, ftype: str, issues_out: List[Issue],
@@ -726,6 +1202,14 @@ def ai_check_file(path: str, ftype: str, issues_out: List[Issue],
         model, sync_note = resolve_local_model(ai)
         if sync_note:
             ai["model"] = model
+        # 本地 CPU 推理可能超过用户配置的短超时：自动放宽，避免误报「连接失败/超时」
+        t = float(ai.get("timeout") or DEFAULTS["timeout"])
+        if t < _LOCAL_TIMEOUT_FLOOR:
+            ai["timeout"] = float(_LOCAL_TIMEOUT_FLOOR)
+            extra = (f"单次调用超时已自动放宽至 {int(_LOCAL_TIMEOUT_FLOOR)} 秒"
+                     f"（原配置 {int(t)} 秒，本地 CPU 推理需要更长时间）")
+            sync_note = (sync_note + "；" if sync_note else "") + extra
+    retry_n = max(0, int(ai.get("retry") or 0))
 
     blocks = extract_texts(path, ftype)
     if not blocks:
@@ -740,6 +1224,36 @@ def ai_check_file(path: str, ftype: str, issues_out: List[Issue],
     ref_text = ""
     if ai.get("ref_enabled", True):
         ref_text = _load_ref_text(int(ai.get("ref_max_chars") or 2000))
+    rag_text = ""
+    if ai.get("kb_enabled"):
+        try:
+            from checkers import rag_store
+            _hits = rag_store.retrieve(
+                "\n".join(b[1] for b in blocks)[:2000],  # 以文件开头为查询词（BM25 快速检索）
+                {"embed_enabled": False},                # 核验链路仅用 BM25，保持响应稳定
+                int(ai.get("kb_top_k") or 3),
+            )
+            if _hits:
+                _parts, _used = [], 0
+                for _h in _hits:
+                    _part = f"【{_h['file']} / {_h['section']}】\n{_h['text']}"
+                    if _used + len(_part) > 6000:
+                        break
+                    _parts.append(_part)
+                    _used += len(_part)
+                if _parts:
+                    rag_text = "\n\n".join(_parts)
+        except Exception:  # noqa: BLE001 - 知识库异常不影响核验
+            rag_text = ""
+    # 增强审核力度：严格取证阈值 + 置信度门槛 + 深度复核轮次
+    strict = bool(ai.get("strict_grounding", True))
+    set_strict_grounding(strict)
+    try:
+        min_conf = float(ai.get("min_confidence") or 0.6)
+    except (TypeError, ValueError):
+        min_conf = 0.6
+    deep = bool(ai.get("deep_review", True))
+
     added = 0
     fail_reasons: List[str] = []
     seen_global: set = set()  # 跨段去重，避免同一问题在重叠分段中重复出现
@@ -755,31 +1269,36 @@ def ai_check_file(path: str, ftype: str, issues_out: List[Issue],
                 on_chunk(k, len(chunks), clip(text, 120))
             except Exception:  # noqa: BLE001 - 回调异常不影响核验
                 pass
-        try:
-            msgs = _messages(ai, text, ref_text)
-            cache_cfg = ai.get("cache") or {}
-            ckey = None
-            if cache_cfg.get("enabled") and on_token is None:
-                ckey = _cache_key(mode, str(ai.get("model", "")),
-                                  json.dumps(msgs, ensure_ascii=False))
-                cached = _cache_get(ckey, int(cache_cfg.get("ttl") or 3600))
-                if cached is not None:
-                    content = cached
-                else:
-                    with _ai_sem(ai):
-                        _ai_throttle(ai)
-                        content = _call_ollama(ai, msgs, on_token=on_token) if mode == "local" \
-                            else _call_openai(ai, msgs)
-                    _cache_put(ckey, content, int(cache_cfg.get("max_entries") or 200))
-            else:
-                with _ai_sem(ai):
-                    _ai_throttle(ai)
-                    content = _call_ollama(ai, msgs, on_token=on_token) if mode == "local" \
-                        else _call_openai(ai, msgs)
-            items = _parse_issues(content, text)
-        except AiError as exc:
-            fail_reasons.append(f"{loc}：{exc}")
+
+        # ---- 第一轮：主核查 ----
+        items, err = _request_issues(ai, mode, _messages(ai, text, ref_text, rag_text, ftype),
+                                     retry_n, min_conf, text, on_token=on_token,
+                                     cancel=cancel)
+        if err:
+            fail_reasons.append(f"{loc}：{err}")
+            if err == "任务已取消":
+                return added, f"任务已取消（已完成 {added} 条）"
             continue
+
+        # ---- 第二轮：深度复核补漏（可关闭，默认开启） ----
+        if deep and (limit <= 0 or len(issues_out) + len(items) < limit):
+            if cancel and cancel():
+                return added, f"任务已取消（已完成 {added} 条）"
+            if on_chunk:
+                try:
+                    on_chunk(k, len(chunks), f"[深度复核] {clip(text, 100)}")
+                except Exception:  # noqa: BLE001
+                    pass
+            found = [f"{it['issue']}（{it['quote']}）" for it in items]
+            items2, err2 = _request_issues(
+                ai, mode, _messages_review(ai, text, found, ref_text, rag_text, ftype),
+                retry_n, min_conf, text, on_token=on_token, cancel=cancel)
+            if err2:
+                # 复核轮失败不影响首轮结论，仅记录
+                fail_reasons.append(f"{loc}：深度复核未完成（{err2}）")
+            else:
+                items = items + items2
+
         for it in items:
             gkey = (_norm_text(it["quote"]), _norm_text(it["issue"]))
             if gkey in seen_global:
@@ -797,6 +1316,7 @@ def ai_check_file(path: str, ftype: str, issues_out: List[Issue],
                 snippet=it["quote"],
                 suggestion=it["suggestion"],
                 source="ai",
+                tag=AI_CATEGORY_MAP.get(it.get("category", ""), it.get("category", "") or "其他"),
             ))
             added += 1
 
@@ -813,8 +1333,24 @@ def ai_check_file(path: str, ftype: str, issues_out: List[Issue],
     return added, ("完成" + (f"（{sync_note}）" if sync_note else ""))
 
 
-def _messages(ai: Dict[str, Any], text: str, ref_text: str = "") -> List[Dict[str, str]]:
-    msgs = [{"role": "system", "content": compose_system(ai, _SYS_PROMPT)}]
+def _messages(ai: Dict[str, Any], text: str, ref_text: str = "", rag_text: str = "",
+              ftype: str = "") -> List[Dict[str, str]]:
+    return _base_messages(ai, compose_system(ai, _SYS_PROMPT), text, ref_text, rag_text, ftype)
+
+
+def _messages_review(ai: Dict[str, Any], text: str, found: List[str],
+                     ref_text: str = "", rag_text: str = "",
+                     ftype: str = "") -> List[Dict[str, str]]:
+    """深度复核（第二轮）消息：携带上一轮已发现问题清单，要求只输出遗漏项。"""
+    found_txt = "\n".join(f"- {f}" for f in found[:40]) or "（上一轮未发现问题）"
+    sys_txt = _REVIEW_PROMPT.replace("{found}", found_txt)
+    return _base_messages(ai, compose_system(ai, sys_txt), text, ref_text, rag_text, ftype)
+
+
+def _base_messages(ai: Dict[str, Any], sys_txt: str, text: str,
+                   ref_text: str = "", rag_text: str = "",
+                   ftype: str = "") -> List[Dict[str, str]]:
+    msgs = [{"role": "system", "content": sys_txt}]
     if ref_text:
         msgs.append({
             "role": "system",
@@ -823,8 +1359,100 @@ def _messages(ai: Dict[str, Any], text: str, ref_text: str = "") -> List[Dict[st
                        "凡判定为『规范不符』的问题，必须在 detail 中注明所依据的标准名称或条款：\n"
                        + ref_text,
         })
-    msgs.append({"role": "user", "content": f"文档片段：\n{text}"})
+    if rag_text:
+        msgs.append({
+            "role": "system",
+            "content": "以下是本地知识库（RAG）检索到的相关规范资料，仅作参考："
+                       "仅当与待核验片段内容一致时依据其核查，不得仅凭资料臆测片段中不存在的内容；"
+                       "若判定『规范不符』，请在 detail 中注明所依据的资料原文：\n"
+                       + rag_text,
+        })
+    # 专项技能：在参考资料之后、输出契约之前注入，使技能提示聚焦且不被格式契约覆盖
+    skill_sec = build_skill_section(ai, ftype)
+    if skill_sec:
+        msgs.append({"role": "system", "content": skill_sec})
+    # 输出契约放最后：紧邻 user 消息，用于压过 preset / 资料中对输出格式的描述
+    msgs.append({"role": "system", "content": _OUTPUT_CONTRACT})
+    msgs.append({"role": "user",
+                 "content": f"文档片段：\n{text}\n\n（请严格按输出契约返回 JSON 数组。）"})
     return msgs
+
+
+def _request_issues(ai: Dict[str, Any], mode: str, msgs: List[Dict[str, str]],
+                    retry_n: int, min_confidence: float,
+                    source_text: str,
+                    on_token: Optional[Callable[[str, str], None]] = None,
+                    cancel: Optional[Callable[[], bool]] = None) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+    """执行一次模型请求并解析问题列表，返回 (问题条目, 错误说明)。
+
+    命中响应缓存时直接复用；失败按 retry_n 重试；解析阶段按 source_text 校验引用真实性。
+    """
+    cache_cfg = ai.get("cache") or {}
+    ckey = None
+    if cache_cfg.get("enabled") and on_token is None:
+        ckey = _cache_key(mode, str(ai.get("model", "")),
+                          json.dumps(msgs, ensure_ascii=False))
+        cached = _cache_get(ckey, int(cache_cfg.get("ttl") or 3600))
+        if cached is not None:
+            return _parse_issues(cached, source_text, min_confidence), None
+    last_err: Optional[str] = None
+    for attempt in range(retry_n + 1):
+        if cancel and cancel():
+            return [], "任务已取消"
+        if attempt > 0:   # 重试前稍作退避，避免夯住本地服务
+            time.sleep(0.5 * attempt)
+        try:
+            with _ai_sem(ai):
+                _ai_throttle(ai)
+                content = _call_ollama(ai, msgs, on_token=on_token) if mode == "local" \
+                    else _call_openai(ai, msgs)
+            if ckey:
+                _cache_put(ckey, content, int(cache_cfg.get("max_entries") or 200))
+            return _parse_issues(content, source_text, min_confidence), None
+        except AiError as exc:
+            last_err = str(exc)
+            continue
+    return [], last_err
+
+
+def build_prompt_record(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """构建本次 AI 核验的「配置 + 提示词」记录，供报告归档与溯源。
+
+    仅记录本机配置与提示词文本，不含任何待核验文档内容。
+    """
+    ai = {**DEFAULTS, **(cfg or {})}
+    mode = str(ai.get("mode") or "local")
+    model = str(ai.get("model") or "")
+    base_url = str(ai.get("base_url") or DEFAULTS["base_url"]).rstrip("/")
+    if mode == "local":
+        model, _sync = resolve_local_model(ai)
+    review_prompt = _REVIEW_PROMPT.replace(
+        "{found}", "（运行时注入：上一轮已发现的问题清单，逐条输出不重复）")
+    return {
+        "enabled": bool(ai.get("enabled")),
+        "mode": "本地 AI（Ollama，零联网）" if mode == "local" else "联网 AI（OpenAI 兼容接口）",
+        "mode_key": mode,
+        "model": model,
+        "base_url": base_url,
+        "deep_review": bool(ai.get("deep_review", True)),
+        "strict_grounding": bool(ai.get("strict_grounding", True)),
+        "min_confidence": ai.get("min_confidence", 0.6),
+        "max_chars": int(ai.get("max_chars") or 3000),
+        "max_requests": int(ai.get("max_requests") or 10),
+        "retry": int(ai.get("retry") or 0),
+        "verify_scope": "全部可解析文件" if str(ai.get("verify_scope", "all")) == "all"
+                        else "仅基础检测出问题的文件",
+        "ref_enabled": bool(ai.get("ref_enabled", True)),
+        "kb_enabled": bool(ai.get("kb_enabled", False)),
+        "coverage": "全篇均匀覆盖（首段 + 末段 + 等距抽样）",
+        "active_skills": [{"id": s["id"], "name": s["name"], "builtin": s.get("builtin", True)}
+                          for s in get_active_skill_list(ai)],
+        "skill_count": len(get_active_skill_list(ai)),
+        "skill_prompts": build_skill_section(ai, "") if get_active_skill_list(ai) else "",
+        "system_prompt": compose_system(ai, _SYS_PROMPT),
+        "review_prompt": review_prompt,
+        "recorded_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
 
 
 def test_connection(ai: Dict[str, Any]) -> Tuple[bool, str]:

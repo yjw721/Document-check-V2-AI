@@ -19,7 +19,11 @@ import copy
 import json
 import os
 import shutil
+import threading
 from typing import Any, Dict, List
+
+# 规则配置并发写保护（多用户同时保存时串行化，避免互相覆盖 / 写坏文件）
+SAVE_RULES_LOCK = threading.Lock()
 
 # ---------------------------------------------------------------------------
 # 路径常量：全部基于当前文件位置推导，避免依赖工作目录
@@ -160,14 +164,15 @@ def load_rules(path: str = RULES_PATH) -> RuleConfig:
 
 def save_rules(config: RuleConfig, path: str = RULES_PATH) -> bool:
     """把当前内存中的规则配置写回本地 JSON 文件。成功返回 True。"""
-    try:
-        tmp_path = path + ".tmp"
-        with open(tmp_path, "w", encoding="utf-8") as fp:
-            json.dump(config.data, fp, ensure_ascii=False, indent=2)
-        os.replace(tmp_path, path)  # 原子替换，避免写坏配置
-        return True
-    except OSError:
-        return False
+    tmp_path = path + ".tmp"
+    with SAVE_RULES_LOCK:
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as fp:
+                json.dump(config.data, fp, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, path)  # 原子替换，避免写坏配置
+            return True
+        except OSError:
+            return False
 
 
 def restore_default_rules(path: str = RULES_PATH) -> RuleConfig:

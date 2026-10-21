@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -29,6 +30,9 @@ from checkers.base import Issue, clip
 
 CONFIG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config")
 CUSTOM_RULES_PATH = os.path.join(CONFIG_DIR, "custom_rules.json")
+
+# 多用户并发写保护：同时保存时串行化，避免互相覆盖 / 写坏文件
+SAVE_LOCK = threading.Lock()
 
 SEVERITY_LABELS = {"high", "medium", "low"}
 VALID_SCOPE = {"all", "word", "excel", "pdf"}
@@ -62,22 +66,58 @@ def load_custom_rules(path: str = CUSTOM_RULES_PATH) -> Dict[str, Any]:
         return _empty_data()
 
 
+# 模块级缓存：避免每文件重复读取
+_CUSTOM_RULES_CACHE: Optional[Dict[str, Any]] = None
+_CUSTOM_RULES_MTIME: float = 0.0
+
+
+def get_custom_rules_cached() -> Dict[str, Any]:
+    """获取自定义规则（带缓存：文件修改时间未变则复用）"""
+    global _CUSTOM_RULES_CACHE, _CUSTOM_RULES_MTIME
+    try:
+        mtime = os.path.getmtime(CUSTOM_RULES_PATH)
+    except OSError:
+        mtime = 0.0
+    
+    if _CUSTOM_RULES_CACHE is None or mtime != _CUSTOM_RULES_MTIME:
+        _CUSTOM_RULES_CACHE = load_custom_rules()
+        _CUSTOM_RULES_MTIME = mtime
+    return _CUSTOM_RULES_CACHE
+
+
 def save_custom_rules(data: Dict[str, Any], path: str = CUSTOM_RULES_PATH) -> bool:
-    """写回本地 JSON（原子替换）。成功返回 True。"""
+    """写回本地 JSON（原子替换）。多用户并发写加锁串行化。成功返回 True。"""
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         tmp = path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as fp:
-            json.dump(data, fp, ensure_ascii=False, indent=2)
-        os.replace(tmp, path)
+        with SAVE_LOCK:
+            with open(tmp, "w", encoding="utf-8") as fp:
+                json.dump(data, fp, ensure_ascii=False, indent=2)
+            os.replace(tmp, path)
         return True
     except OSError:
         return False
 
 
 def gen_id(prefix: str = "g") -> str:
-    """生成短随机 id。"""
-    return prefix + uuid.uuid4().hex[:8]
+    """生成短随机 id。12 hex：生日碰撞阈值约 1.6 千万。"""
+    return prefix + uuid.uuid4().hex[:12]
+
+
+# ReDoS 防护：拒绝明显可指数级回溯的灾难模式（嵌套量词），并限制正则长度。
+# 覆盖最常见模式：(.+)+ / (a*)* / (\w+)+ / (a+)?{n,m} 等。
+import re as _re_safety
+_DANGEROUS_RE = _re_safety.compile(r"\([^()]*[+*?]\)[+*?{]")
+_MAX_REGEX_LEN = 500
+
+
+def _safe_regex(pattern: str) -> bool:
+    """True 表示该正则可安全使用；False 表示拒绝。"""
+    if not pattern or len(pattern) > _MAX_REGEX_LEN:
+        return False
+    if _DANGEROUS_RE.search(pattern):
+        return False
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -102,9 +142,11 @@ class CustomRuleEngine:
         if not pattern:
             return False
         if mode == "regex":
+            if not _safe_regex(pattern):
+                return False
             try:
                 return re.search(pattern, text) is not None
-            except re.error:
+            except (re.error, RecursionError):
                 return False
         # 默认 keyword：子串精确匹配
         return pattern in text

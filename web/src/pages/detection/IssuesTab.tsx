@@ -5,6 +5,7 @@ import HoloBadge from "../../components/ui/HoloBadge";
 import { HoloInput, HoloSelect } from "../../components/ui/HoloInput";
 import EmptyState from "../../components/common/EmptyState";
 import { api } from "../../lib/api";
+import { useTaskState } from "../../lib/taskState";
 import type { Issue, IssueState } from "../../lib/types";
 import { SEV_LABEL } from "../../lib/constants";
 import { useToast } from "../../components/ui/Toast";
@@ -17,13 +18,16 @@ export default function IssuesTab() {
   const [sev, setSev] = useState("all");
   const [state, setState] = useState("all");
   const [q, setQ] = useState("");
+  /* 最近一次核验任务的完成时间戳：任务结束后强制刷新，避免展示上一轮旧结果 */
+  const taskStamp = useTaskState().state.stamp;
 
   useEffect(() => {
+    /* cache: "no-store" 绕过浏览器 HTTP 缓存，确保取到本轮最新结果 */
     api
-      .issues()
+      .issues({ cache: "no-store" })
       .then((d) => setIssues(d.issues))
       .catch((e: Error) => setErr(e.message));
-  }, []);
+  }, [taskStamp]);
 
   const filtered = useMemo(() => {
     const kw = q.trim().toLowerCase();

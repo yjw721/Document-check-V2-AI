@@ -18,8 +18,12 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from typing import Any, Dict, Optional
+
+# 配置并发写保护：多用户同时保存时防止互相覆盖 / 写坏文件
+SAVE_LOCK = threading.Lock()
 
 # ---------------------------------------------------------------------------
 # 路径常量（基于本文件位置推导，不依赖工作目录）
@@ -63,7 +67,7 @@ DEFAULTS: Dict[str, Any] = {
         "sidebar_default_collapsed": False,
         "animation_enabled": True,
         "theme_accent": "blue",
-        "theme_scheme": "holographic",   # 配色方案：holographic 全息渐变（默认） / dark 深色收敛
+        "theme_scheme": "holographic",   # 配色方案：holographic 全息渐变（默认） / dark 深色收敛 / ink 水墨
         "accent_color": "",              # 自定义强调色 hex（空 = 使用方案默认强调色）
         "table_row_height": "cozy",
         "page_size": 20,
@@ -91,7 +95,7 @@ DEFAULTS: Dict[str, Any] = {
         "base_url": "http://127.0.0.1:11434",  # local: Ollama 地址；online: 服务商接口地址（如 https://api.deepseek.com/v1）
         "api_key": "",                         # 联网 AI 的 API Key（本地 AI 留空）
         "model": "qwen2.5:7b",                 # 模型名（联网时如 deepseek-chat / qwen-max 等）
-        "timeout": 60,                         # 单次调用超时秒数
+        "timeout": 60,                         # 单次调用超时秒数（本地模式 CPU 推理较慢时自动放宽至不小于 300 秒）
         "max_chars": 3000,                     # 每段最大字符数
         "max_requests": 10,                    # 单文件最多调用次数（超出部分截断）
         "ref_enabled": True,                   # 核验时携带参考资料（标准/词汇/规范）
@@ -114,12 +118,33 @@ DEFAULTS: Dict[str, Any] = {
             "ttl": 3600,                       # 缓存有效期（秒）
             "max_entries": 200,                # 最大缓存条目
         },
+        # —— 本地知识库（RAG 检索问答） ——
+        "kb_enabled": False,                   # AI 核验时检索本地知识库作为参考资料
+        "kb_top_k": 3,                         # 每次核验注入的知识库片段数量
+        "embed_enabled": True,                 # 使用 Ollama 嵌入模型做向量检索（无嵌入模型自动退化为 BM25）
+        "embed_model": "bge-m3",               # Ollama 嵌入模型名（如 bge-m3 / nomic-embed-text）
+        # —— 核验行为（可控性增强） ——
+        "retry": 1,                            # 单段调用失败（超时/连接）重试次数（0 = 不重试）
+        "verify_scope": "all",                 # AI 核验范围：all 全部可解析文件 / issues 仅基础检测已命中问题的文件
+        "fail_as_issue": False,                # AI 阶段失败是否写入问题列表（False=仅文件状态提示与日志，不污染统计/报告）
+        # —— 增强审核力度 ——
+        "deep_review": True,                   # 每段追加一轮「补漏复核」请求（耗时约翻倍，关闭可提速）
+        "strict_grounding": True,              # 严格取证：引用须逐字命中原文（短引用须完整命中），抑制幻觉
+        "min_confidence": 0.6,                 # 置信度门槛：模型把握度低于该值的问题直接丢弃（0 = 不过滤）
+        # —— 专项技能（SKILL）——
+        "active_skills": ["financial_reconciliation", "terminology_consistency"],
+        # 启用的技能 id 集合（含内置与自定义）；空列表 = 全部关闭；缺省字段 = 自动启用内置 default_on
+        "custom_skills": [],                   # 用户自定义技能库：[{id,name,prompt,description,file_types,default_severity}]
     },
     "log_cache": {
         "cache_expire_days": 7,
         "run_log": False,
     },
     "role": "admin",                           # 当前应用角色：admin 管理员（可见 AI 配置等后台模块）/ user 普通用户
+    "security": {                              # 访问安全（多用户 / 局域网共享场景）
+        "access_token": "",                    # 访问口令：空 = 免密（默认单机模式）；非空 = 局域网用户需输入后才能使用
+        "listen": "127.0.0.1",                 # 监听地址：127.0.0.1 = 仅本机 / 0.0.0.0 = 开放局域网（多用户）
+    },
 }
 
 
@@ -165,15 +190,16 @@ def load_settings(path: str = SETTINGS_PATH) -> Dict[str, Any]:
 
 
 def save_settings(data: Dict[str, Any], path: str = SETTINGS_PATH) -> bool:
-    """原子写入设置；成功返回 True。"""
-    try:
-        tmp = path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as fp:
-            json.dump(data, fp, ensure_ascii=False, indent=2)
-        os.replace(tmp, path)
-        return True
-    except OSError:
-        return False
+    """原子写入设置；成功返回 True。多用户并发写加锁串行化。"""
+    tmp = path + ".tmp"
+    with SAVE_LOCK:
+        try:
+            with open(tmp, "w", encoding="utf-8") as fp:
+                json.dump(data, fp, ensure_ascii=False, indent=2)
+            os.replace(tmp, path)
+            return True
+        except OSError:
+            return False
 
 
 def restore_defaults(path: str = SETTINGS_PATH) -> Dict[str, Any]:

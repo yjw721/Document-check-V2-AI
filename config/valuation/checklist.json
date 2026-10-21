@@ -1,0 +1,1093 @@
+{
+  "version": "1.0",
+  "updated": "2026-09-01",
+  "source": "AI核查报告需求点提取.html",
+  "note": "9 大核查节点 / 96 项核查事项。engine: rule=本地确定性规则引擎；ai=AI 语义核查（需启用 AI）；hybrid=先跑规则再跑 AI 补充。rule 为本地规则函数标识（与 checkers/valuation/rules.py 的 RULE_FUNCS 对应）。",
+  "nodes": [
+    {
+      "id": "N1",
+      "no": "①",
+      "name": "评估报告核查",
+      "type": "single",
+      "inputs": [
+        "B7"
+      ],
+      "input_text": "报告全文",
+      "desc": "对评估报告全文进行独立核查，覆盖错漏字、一致性、勾稽、披露与各章节要素。",
+      "items": [
+        {
+          "id": "N1-01",
+          "no": 1,
+          "title": "错漏字与术语规范性",
+          "engine": "hybrid",
+          "severity": "medium",
+          "source": "提示词1-第二步",
+          "desc": "全文扫描，重点关注\"资产基础法/成本法\"误用、\"账面价值/账面原值\"混淆、\"评估值/市场价值/评估结论\"混用，以及单位名称、日期在全文各处是否一致",
+          "rule_key": "terms"
+        },
+        {
+          "id": "N1-02",
+          "no": 2,
+          "title": "上下文一致性",
+          "engine": "ai",
+          "severity": "high",
+          "source": "提示词1-第二步",
+          "desc": "同一数据（评估结论、各方法结果、增值率）、同一日期（基准日、报告日、决议日期）、同一事项（权属瑕疵、特别事项）在全文各章节的表述是否一致",
+          "rule_key": ""
+        },
+        {
+          "id": "N1-03",
+          "no": 3,
+          "title": "数据勾稽",
+          "engine": "hybrid",
+          "severity": "high",
+          "source": "提示词1-第二步",
+          "desc": "对每一张数据表格，检查合计行是否等于明细行加总、评估值=账面值+增值额、增值率=增值额/账面值×100%是否计算正确",
+          "rule_key": "doc_table_sum"
+        },
+        {
+          "id": "N1-04",
+          "no": 4,
+          "title": "披露完整性",
+          "engine": "ai",
+          "severity": "high",
+          "source": "提示词1-第二步",
+          "desc": "权属瑕疵、未决诉讼、对外担保、资产抵押/质押等特别事项是否充分披露；引用外部报告（审计报告等）是否完整注明机构、文号、日期、意见类型",
+          "rule_key": ""
+        },
+        {
+          "id": "N1-05",
+          "no": 5,
+          "title": "声明",
+          "engine": "ai",
+          "severity": "medium",
+          "source": "提示词1-第三步",
+          "desc": "声明条款是否完整覆盖必要内容（依据准则编制、使用范围限制、独立性声明、现场调查说明、假设限制条件提示）",
+          "rule_key": ""
+        },
+        {
+          "id": "N1-06",
+          "no": 6,
+          "title": "摘要",
+          "engine": "ai",
+          "severity": "high",
+          "source": "提示词1-第三步",
+          "desc": "摘要中的评估结论、评估目的、评估对象、评估基准日等核心信息是否与正文一致",
+          "rule_key": ""
+        },
+        {
+          "id": "N1-07",
+          "no": 7,
+          "title": "正文-委托人及被评估单位",
+          "engine": "ai",
+          "severity": "medium",
+          "source": "提示词1-第三步",
+          "desc": "企业基本信息、历史沿革、股权结构、三年一期财务数据是否完整",
+          "rule_key": ""
+        },
+        {
+          "id": "N1-08",
+          "no": 8,
+          "title": "正文-评估依据",
+          "engine": "ai",
+          "severity": "medium",
+          "source": "提示词1-第三步",
+          "desc": "法律法规和准则是否为现行有效版本、权属依据是否覆盖主要资产、取价依据是否充分且来源可查",
+          "rule_key": ""
+        },
+        {
+          "id": "N1-09",
+          "no": 9,
+          "title": "正文-评估方法",
+          "engine": "ai",
+          "severity": "medium",
+          "source": "提示词1-第三步",
+          "desc": "三种方法的适用性分析是否充分、市场法不采用的理由是否完整、所选方法的参数选取依据是否清晰",
+          "rule_key": ""
+        },
+        {
+          "id": "N1-10",
+          "no": 10,
+          "title": "正文-特别事项说明",
+          "engine": "ai",
+          "severity": "high",
+          "source": "提示词1-第三步",
+          "desc": "是否完整披露了所有应披露事项（权属瑕疵、未决诉讼、担保、抵押、流动性折价等），披露内容是否与其他章节一致",
+          "rule_key": ""
+        }
+      ]
+    },
+    {
+      "id": "N2",
+      "no": "②",
+      "name": "评估说明核查",
+      "type": "single",
+      "inputs": [
+        "B4",
+        "B5",
+        "B6"
+      ],
+      "input_text": "3 段评估说明",
+      "desc": "对切分后的评估说明三段进行核查，覆盖勾稽、方法分析自洽、参数依据与说明一至说明五专项。",
+      "items": [
+        {
+          "id": "N2-01",
+          "no": 1,
+          "title": "错漏字与术语规范性",
+          "engine": "hybrid",
+          "severity": "medium",
+          "source": "提示词2-第二步",
+          "desc": "全文扫描，重点关注\"资产基础法/成本法\"误用、\"账面价值/账面原值\"混淆、\"评估值/市场价值\"混用，以及单位名称、日期在全文各处是否一致",
+          "rule_key": "terms"
+        },
+        {
+          "id": "N2-02",
+          "no": 2,
+          "title": "表格数据勾稽",
+          "engine": "hybrid",
+          "severity": "high",
+          "source": "提示词2-第二步",
+          "desc": "对每一张数据表格，检查合计行是否等于明细行加总、跨表引用的数据是否一致、评估值=账面值+增值额、增值率=增值额/账面值×100%是否计算正确",
+          "rule_key": "doc_table_sum"
+        },
+        {
+          "id": "N2-03",
+          "no": 3,
+          "title": "评估方法适用性分析的一致性",
+          "engine": "ai",
+          "severity": "medium",
+          "source": "提示词2-第二步",
+          "desc": "收益法适用性分析、资产基础法适用性分析、市场法不采用理由的表述是否完整，各方法适用性分析的逻辑链条是否自洽",
+          "rule_key": ""
+        },
+        {
+          "id": "N2-04",
+          "no": 4,
+          "title": "参数选取依据的充分性",
+          "engine": "ai",
+          "severity": "medium",
+          "source": "提示词2-第二步",
+          "desc": "折现率、分成率、增长率、成本利润率、成新率等关键参数是否标注来源或说明确定依据",
+          "rule_key": ""
+        },
+        {
+          "id": "N2-05",
+          "no": 5,
+          "title": "从数据到结论的推理完整性",
+          "engine": "ai",
+          "severity": "medium",
+          "source": "提示词2-第二步",
+          "desc": "评估说明中描述的推理过程是否能逻辑上支持最终结论",
+          "rule_key": ""
+        },
+        {
+          "id": "N2-06",
+          "no": 6,
+          "title": "与评估报告的一致性",
+          "engine": "ai",
+          "severity": "high",
+          "source": "提示词2-第二步",
+          "desc": "产权状况、评估范围、评估结论、审计报告文号等是否与评估报告一致",
+          "rule_key": ""
+        },
+        {
+          "id": "N2-07",
+          "no": 7,
+          "title": "说明一（评估对象与评估范围）",
+          "engine": "ai",
+          "severity": "medium",
+          "source": "提示词2-第三步",
+          "desc": "评估范围是否逐项列示各资产和负债科目；表外无形资产是否完整披露；资产权属状况是否如实披露",
+          "rule_key": ""
+        },
+        {
+          "id": "N2-08",
+          "no": 8,
+          "title": "说明二（资产核实情况总体说明）",
+          "engine": "ai",
+          "severity": "medium",
+          "source": "提示词2-第三步",
+          "desc": "核实时间是否在评估基准日之后合理期限内；核实方法是否完整描述；影响资产核实的事项是否如实披露",
+          "rule_key": ""
+        },
+        {
+          "id": "N2-09",
+          "no": 9,
+          "title": "说明三（资产基础法评估说明）",
+          "engine": "hybrid",
+          "severity": "high",
+          "source": "提示词2-第三步",
+          "desc": "对各科目评估方法的描述是否逐项完整；各科目账面价值合计是否等于流动资产/非流动资产合计；评估价值合计是否正确；评估增值/减值率是否异常且已解释",
+          "rule_key": "doc_table_sum"
+        },
+        {
+          "id": "N2-10",
+          "no": 10,
+          "title": "说明四（收益法评估技术说明）",
+          "engine": "ai",
+          "severity": "medium",
+          "source": "提示词2-第三步",
+          "desc": "评估模型是否明确，公式是否完整；预测期划分及收益年限的确定是否合理；营业收入、营业成本、期间费用是否分项预测；折现率的各构成要素选取依据是否充分；预测期与历史期数据的衔接是否合理；经营性/非经营性/溢余资产的划分是否合理",
+          "rule_key": ""
+        },
+        {
+          "id": "N2-11",
+          "no": 11,
+          "title": "说明五（评估结论及分析）",
+          "engine": "ai",
+          "severity": "high",
+          "source": "提示词2-第三步",
+          "desc": "两种方法评估结论是否清晰列示；差异额和差异率是否正确；差异原因分析是否合理充分；各科目增减值原因是否逐一分析",
+          "rule_key": ""
+        }
+      ]
+    },
+    {
+      "id": "N3",
+      "no": "③",
+      "name": "收益法表核查",
+      "type": "single",
+      "inputs": [
+        "B1"
+      ],
+      "input_text": "收益法底稿块（含通用表）",
+      "desc": "对收益法底稿块进行核查，从汇总勾稽到现金流公式、折现率参数与价值汇总逐层深入。",
+      "items": [
+        {
+          "id": "N3-01",
+          "no": 1,
+          "title": "分类汇总勾稽",
+          "engine": "rule",
+          "severity": "high",
+          "source": "提示词3-第二步",
+          "desc": "识别明细行与汇总行的关系，检查合计/汇总值是否等于明细行加总",
+          "rule_key": "sum_rows"
+        },
+        {
+          "id": "N3-02",
+          "no": 2,
+          "title": "横向与纵向加总",
+          "engine": "rule",
+          "severity": "high",
+          "source": "提示词3-第二步",
+          "desc": "对每张表中的行合计、列合计进行验证，确认合计行/列是否等于明细项之和",
+          "rule_key": "rowcol_sum"
+        },
+        {
+          "id": "N3-03",
+          "no": 3,
+          "title": "按列方向的运算逻辑一致性",
+          "engine": "rule",
+          "severity": "medium",
+          "source": "提示词3-第二步",
+          "desc": "检查同一公式是否在整列范围内一致应用，识别公式断层或硬编码导致的年度间计算逻辑不一致",
+          "rule_key": "formula_col"
+        },
+        {
+          "id": "N3-04",
+          "no": 4,
+          "title": "跨表数据勾稽",
+          "engine": "rule",
+          "severity": "high",
+          "source": "提示词3-第二步",
+          "desc": "同一数据在不同 sheet 中是否一致（如营业收入预测表与现金流量计算表中的收入数据应完全一致）",
+          "rule_key": "cross_sheet"
+        },
+        {
+          "id": "N3-05",
+          "no": 5,
+          "title": "基础数据表检查",
+          "engine": "rule",
+          "severity": "high",
+          "source": "提示词3-第三步",
+          "desc": "资产负债表的资产总计是否等于负债总计+所有者权益总计；利润表的营业利润、利润总额、净利润的计算是否正确；各年度数据的时间序列是否连续、无断档",
+          "rule_key": "balance_sheet"
+        },
+        {
+          "id": "N3-06",
+          "no": 6,
+          "title": "现金流公式勾稽",
+          "engine": "rule",
+          "severity": "high",
+          "source": "提示词3-第四步",
+          "desc": "净利润+折旧摊销-营运资金增加-资本性支出+扣税后利息=净现金流量是否正确；各年度折现值=净现金流量×折现系数是否正确；经营性现金流价值是否为各年度折现值的合计",
+          "rule_key": "cashflow"
+        },
+        {
+          "id": "N3-07",
+          "no": 7,
+          "title": "企业整体价值与股东权益价值勾稽",
+          "engine": "rule",
+          "severity": "high",
+          "source": "提示词3-第四步",
+          "desc": "企业整体价值=经营性资产价值+溢余资产价值+非经营性资产-非经营性负债-付息负债；股东全部权益价值=企业整体价值-付息负债",
+          "rule_key": "value_rollup"
+        },
+        {
+          "id": "N3-08",
+          "no": 8,
+          "title": "折现率应用一致性",
+          "engine": "rule",
+          "severity": "medium",
+          "source": "提示词3-第四步",
+          "desc": "折现率是否在各表中一致应用，各年度是否使用同一折现率",
+          "rule_key": "discount_rate"
+        },
+        {
+          "id": "N3-09",
+          "no": 9,
+          "title": "永续期数据一致性",
+          "engine": "rule",
+          "severity": "medium",
+          "source": "提示词3-第四步",
+          "desc": "永续期现金流量是否与预测期末年相关数据一致",
+          "rule_key": "perpetuity"
+        },
+        {
+          "id": "N3-10",
+          "no": 10,
+          "title": "预测期与历史期衔接",
+          "engine": "rule",
+          "severity": "medium",
+          "source": "提示词3-第四步",
+          "desc": "预测期第一年与历史最后一年是否存在跳跃且未解释",
+          "rule_key": "forecast_link"
+        },
+        {
+          "id": "N3-11",
+          "no": 11,
+          "title": "营业收入预测明细",
+          "engine": "rule",
+          "severity": "medium",
+          "source": "提示词3-第五步",
+          "desc": "销量×单价是否等于收入金额",
+          "rule_key": "revenue"
+        },
+        {
+          "id": "N3-12",
+          "no": 12,
+          "title": "营运资金计算",
+          "engine": "rule",
+          "severity": "medium",
+          "source": "提示词3-第五步",
+          "desc": "营运资金各项目周转率是否正确；各年度营运资金增加额是否基于营运资金余额变动计算",
+          "rule_key": "working_capital"
+        },
+        {
+          "id": "N3-13",
+          "no": 13,
+          "title": "折现率参数",
+          "engine": "rule",
+          "severity": "medium",
+          "source": "提示词3-第五步",
+          "desc": "无风险收益率选取的国债期限与收益期限是否匹配；各参数计算是否符合 CAPM/WACC 模型公式要求",
+          "rule_key": "discount_params"
+        },
+        {
+          "id": "N3-14",
+          "no": 14,
+          "title": "税项与所得税",
+          "engine": "rule",
+          "severity": "medium",
+          "source": "提示词3-第六步",
+          "desc": "各项税金及附加的计算是否与适用的税率一致；所得税费用是否基于利润总额及纳税调整项正确计算",
+          "rule_key": "tax"
+        },
+        {
+          "id": "N3-15",
+          "no": 15,
+          "title": "价值汇总与结论",
+          "engine": "rule",
+          "severity": "high",
+          "source": "提示词3-第七步",
+          "desc": "非经营性资产/负债、溢余资产的认定是否合理；股东全部权益价值的最终汇总计算是否正确；评估结论数值是否与评估报告/说明中的最终结论一致",
+          "rule_key": "value_conclusion"
+        }
+      ]
+    },
+    {
+      "id": "N4",
+      "no": "④",
+      "name": "成本法表核查",
+      "type": "single",
+      "inputs": [
+        "B2"
+      ],
+      "input_text": "成本法底稿块（含通用表）",
+      "desc": "对成本法底稿块进行核查，覆盖明细勾稽、报表衔接、三类评估方法验证与各科目专项检查。",
+      "items": [
+        {
+          "id": "N4-01",
+          "no": 1,
+          "title": "分类汇总勾稽",
+          "engine": "rule",
+          "severity": "high",
+          "source": "提示词4-第二步",
+          "desc": "识别明细行与汇总行的关系，检查合计/汇总值是否等于明细行加总",
+          "rule_key": "sum_rows"
+        },
+        {
+          "id": "N4-02",
+          "no": 2,
+          "title": "横向与纵向加总",
+          "engine": "rule",
+          "severity": "high",
+          "source": "提示词4-第二步",
+          "desc": "对每张表中的行合计、列合计进行验证，确认合计行/列是否等于明细项之和",
+          "rule_key": "rowcol_sum"
+        },
+        {
+          "id": "N4-03",
+          "no": 3,
+          "title": "按列方向的运算逻辑一致性",
+          "engine": "rule",
+          "severity": "medium",
+          "source": "提示词4-第二步",
+          "desc": "检查同一公式是否在整列范围内一致应用（如账面原值、账面净值、评估原值、评估净值、增值额、增值率等），识别公式断层或硬编码",
+          "rule_key": "formula_col"
+        },
+        {
+          "id": "N4-04",
+          "no": 4,
+          "title": "跨表数据勾稽",
+          "engine": "rule",
+          "severity": "high",
+          "source": "提示词4-第二步",
+          "desc": "同一数据在不同 sheet 中是否一致（如明细表中的评估值合计是否等于汇总表中的对应金额）",
+          "rule_key": "cross_sheet"
+        },
+        {
+          "id": "N4-05",
+          "no": 5,
+          "title": "增值额与增值率",
+          "engine": "rule",
+          "severity": "high",
+          "source": "提示词4-第二步",
+          "desc": "增值额=评估价值-账面价值；增值率=增值额/账面价值×100%，对每个明细项逐一验证是否正确",
+          "rule_key": "appreciation"
+        },
+        {
+          "id": "N4-06",
+          "no": 6,
+          "title": "资产负债表与评估明细表衔接",
+          "engine": "rule",
+          "severity": "high",
+          "source": "提示词4-第三步",
+          "desc": "各科目明细表的账面价值合计是否等于资产负债表中对应的合计值；流动资产各明细账面价值合计是否等于流动资产合计；非流动资产各明细账面价值合计是否等于非流动资产合计",
+          "rule_key": "bs_link"
+        },
+        {
+          "id": "N4-07",
+          "no": 7,
+          "title": "评估结果汇总表勾稽",
+          "engine": "rule",
+          "severity": "high",
+          "source": "提示词4-第三步",
+          "desc": "各科目评估价值合计是否等于对应资产/负债类别的评估值；资产评估值=流动资产评估值+非流动资产评估值；负债评估值=流动负债评估值+非流动负债评估值；净资产评估值=总资产评估值-总负债评估值",
+          "rule_key": "summary_rollup"
+        },
+        {
+          "id": "N4-08",
+          "no": 8,
+          "title": "成本法验证",
+          "engine": "rule",
+          "severity": "high",
+          "source": "提示词4-第四步",
+          "desc": "检查重置成本、成新率、评估净值的计算逻辑是否正确，各类费率（运杂费率、安装费率、前期费率等）的应用是否一致",
+          "rule_key": "cost_approach"
+        },
+        {
+          "id": "N4-09",
+          "no": 9,
+          "title": "收益法验证",
+          "engine": "ai",
+          "severity": "medium",
+          "source": "提示词4-第四步",
+          "desc": "（适用于专利权等无形资产）收益额、分成率、折现率、折现年限各要素是否完整，评估值是否正确",
+          "rule_key": ""
+        },
+        {
+          "id": "N4-10",
+          "no": 10,
+          "title": "市场法验证",
+          "engine": "ai",
+          "severity": "medium",
+          "source": "提示词4-第四步",
+          "desc": "（适用于部分设备、车辆等）市场二手价的确定是否有依据，可比交易案例的修正是否合理",
+          "rule_key": ""
+        },
+        {
+          "id": "N4-11",
+          "no": 11,
+          "title": "坏账准备处理",
+          "engine": "rule",
+          "severity": "medium",
+          "source": "提示词4-第六步",
+          "desc": "应收账款、其他应收款的坏账准备是否按零值评估，预计风险损失的计算是否合理",
+          "rule_key": "bad_debt"
+        },
+        {
+          "id": "N4-12",
+          "no": 12,
+          "title": "存货评估",
+          "engine": "ai",
+          "severity": "medium",
+          "source": "提示词4-第六步",
+          "desc": "产成品评估单价计算中的各项扣除率是否正确引用，不同销售状况的净利润扣除率是否合理区分",
+          "rule_key": ""
+        },
+        {
+          "id": "N4-13",
+          "no": 13,
+          "title": "固定资产评估",
+          "engine": "rule",
+          "severity": "medium",
+          "source": "提示词4-第六步",
+          "desc": "重置成本构成的完整性，成新率是否正确，评估增值/减值率异常（如超过±50%）是否有合理解释",
+          "rule_key": "fixed_asset"
+        },
+        {
+          "id": "N4-14",
+          "no": 14,
+          "title": "无形资产评估",
+          "engine": "ai",
+          "severity": "medium",
+          "source": "提示词4-第六步",
+          "desc": "表外无形资产的识别是否完整，收入分成率、折现率的选取是否有依据",
+          "rule_key": ""
+        },
+        {
+          "id": "N4-15",
+          "no": 15,
+          "title": "评估结论与其他文件的一致性",
+          "engine": "rule",
+          "severity": "high",
+          "source": "提示词4-第五步",
+          "desc": "评估结论数值是否与评估报告/说明一致",
+          "rule_key": "conclusion_match"
+        }
+      ]
+    },
+    {
+      "id": "N5",
+      "no": "⑤",
+      "name": "市场法表核查",
+      "type": "single",
+      "inputs": [
+        "B3"
+      ],
+      "input_text": "市场法底稿块（含通用表）",
+      "desc": "对市场法底稿块进行核查，聚焦可比公司名单、基础数据同源、价值比率与修正体系。",
+      "items": [
+        {
+          "id": "N5-01",
+          "no": 1,
+          "title": "分类汇总勾稽",
+          "engine": "rule",
+          "severity": "high",
+          "source": "同收益法/成本法结构",
+          "desc": "识别明细行与汇总行的关系，检查合计/汇总值是否等于明细行加总",
+          "rule_key": "sum_rows"
+        },
+        {
+          "id": "N5-02",
+          "no": 2,
+          "title": "横向与纵向加总",
+          "engine": "rule",
+          "severity": "high",
+          "source": "同收益法/成本法结构",
+          "desc": "对每张表中的行合计、列合计进行验证，确认合计行/列是否等于明细项之和",
+          "rule_key": "rowcol_sum"
+        },
+        {
+          "id": "N5-03",
+          "no": 3,
+          "title": "跨表数据勾稽",
+          "engine": "rule",
+          "severity": "high",
+          "source": "同收益法/成本法结构",
+          "desc": "同一数据在不同 sheet 中是否一致（如可比公司财务数据在\"基础数据表\"和\"修正计算表\"中应完全一致）",
+          "rule_key": "cross_sheet"
+        },
+        {
+          "id": "N5-04",
+          "no": 4,
+          "title": "可比公司名单一致性",
+          "engine": "rule",
+          "severity": "high",
+          "source": "参考提示词3跨表检查逻辑",
+          "desc": "可比公司名称/股票代码在\"基础数据表\"\"修正计算表\"\"结论表\"中是否完全一致，无漏行或错行",
+          "rule_key": "peer_list"
+        },
+        {
+          "id": "N5-05",
+          "no": 5,
+          "title": "基准日股价数据一致性",
+          "engine": "rule",
+          "severity": "medium",
+          "source": "同收益法折现率检查逻辑",
+          "desc": "基准日股价、每股收益（EPS）、每股净资产（BPS）等基础数据是否从原始数据页统一引用，全文件同源",
+          "rule_key": "cross_sheet"
+        },
+        {
+          "id": "N5-06",
+          "no": 6,
+          "title": "价值比率计算勾稽",
+          "engine": "rule",
+          "severity": "high",
+          "source": "同收益法/成本法增值率检查逻辑",
+          "desc": "市值÷盈利指标的结果，是否等于列示的 PE/PB/PS/EV/EBITDA 倍数",
+          "rule_key": "market_ratio"
+        },
+        {
+          "id": "N5-07",
+          "no": 7,
+          "title": "修正因素应用一致性",
+          "engine": "rule",
+          "severity": "medium",
+          "source": "同收益法折现率应用一致性逻辑",
+          "desc": "规模修正、增长率修正、流动性修正等各修正系数是否在修正计算表中统一应用，跨表无矛盾",
+          "rule_key": "formula_col"
+        },
+        {
+          "id": "N5-08",
+          "no": 8,
+          "title": "缺乏流动性折扣（DLOM）",
+          "engine": "rule",
+          "severity": "medium",
+          "source": "参考提示词3参数体系检查",
+          "desc": "DLOM 的取值是否在计算表中统一引用，计算过程各要素是否完整",
+          "rule_key": "dlom"
+        },
+        {
+          "id": "N5-09",
+          "no": 9,
+          "title": "估值结论汇总勾稽",
+          "engine": "rule",
+          "severity": "high",
+          "source": "参考提示词3/4结论汇总勾稽",
+          "desc": "各可比公司估值结论与最终采用的估值结论之间的汇总勾稽是否正确",
+          "rule_key": "sum_rows"
+        },
+        {
+          "id": "N5-10",
+          "no": 10,
+          "title": "评估结论与其他文件的一致性",
+          "engine": "rule",
+          "severity": "high",
+          "source": "提示词3-第七步 / 提示词4-第五步",
+          "desc": "市场法评估结论数值是否与评估报告/说明中的最终结论一致",
+          "rule_key": "conclusion_match"
+        }
+      ]
+    },
+    {
+      "id": "N6",
+      "no": "⑥",
+      "name": "报告↔说明联查",
+      "type": "cross",
+      "inputs": [
+        "B7",
+        "B4",
+        "B5",
+        "B6"
+      ],
+      "input_text": "报告全文 + 3 段说明",
+      "desc": "交叉比对评估报告与评估说明，覆盖基本信息、范围、结论、方法、参数、历史数据、特别事项与假设。",
+      "items": [
+        {
+          "id": "N6-01",
+          "no": 1,
+          "title": "基本信息一致性",
+          "engine": "hybrid",
+          "severity": "high",
+          "source": "提示词6-第一步/第二步",
+          "desc": "报告文号、评估基准日、报告出具日、委托人全称、被评估单位全称、评估机构全称、经济行为决议文件名称及文号、审计报告机构名称/文号/日期/意见类型是否一致",
+          "rule_key": "cross_doc_values"
+        },
+        {
+          "id": "N6-02",
+          "no": 2,
+          "title": "评估范围一致性",
+          "engine": "ai",
+          "severity": "high",
+          "source": "提示词6-第二步",
+          "desc": "评估对象的界定是否一致；评估范围涵盖的资产/负债科目是否一致；表外资产的披露是否一致；是否存在一方披露而另一方未披露的范围事项",
+          "rule_key": ""
+        },
+        {
+          "id": "N6-03",
+          "no": 3,
+          "title": "评估结论一致性",
+          "engine": "hybrid",
+          "severity": "high",
+          "source": "提示词6-第二步",
+          "desc": "资产基础法评估结果（账面价值、评估价值、增值额、增值率）是否一致；收益法评估结果（评估价值、增值额、增值率）是否一致；最终评估结论（选取的方法、评估价值）是否一致；各分项数据（流动资产、非流动资产、资产总计、负债总计、净资产）是否一致",
+          "rule_key": "conclusion_match"
+        },
+        {
+          "id": "N6-04",
+          "no": 4,
+          "title": "评估方法描述一致性",
+          "engine": "ai",
+          "severity": "medium",
+          "source": "提示词6-第二步",
+          "desc": "资产基础法适用性分析的理由是否一致；收益法适用性分析的理由是否一致；不采用市场法的理由是否一致；各方法的技术思路和模型描述是否一致",
+          "rule_key": ""
+        },
+        {
+          "id": "N6-05",
+          "no": 5,
+          "title": "关键参数表述一致性",
+          "engine": "ai",
+          "severity": "medium",
+          "source": "提示词6-第二步",
+          "desc": "收益法中的预测期年限、收益期年限；折现率的数值及构成（无风险收益率、MRP、β、特定风险系数等）；各评估方法中采用的重大假设；特别事项的表述及处理方式是否一致",
+          "rule_key": ""
+        },
+        {
+          "id": "N6-06",
+          "no": 6,
+          "title": "企业基本信息与历史数据一致性",
+          "engine": "hybrid",
+          "severity": "medium",
+          "source": "提示词6-第二步",
+          "desc": "成立日期、注册资本、法定代表人、企业类型是否一致；股权结构及历史沿革描述是否一致；历史三年一期财务报表数据（资产、负债、净资产、收入、利润等）是否一致",
+          "rule_key": "cross_doc_values"
+        },
+        {
+          "id": "N6-07",
+          "no": 7,
+          "title": "特别事项披露一致性",
+          "engine": "ai",
+          "severity": "high",
+          "source": "提示词6-第二步",
+          "desc": "权属瑕疵事项的描述及处理方式是否一致；未决诉讼/仲裁事项的描述是否一致；对外担保事项的描述是否一致；资产抵押/质押事项的描述是否一致；引用外部报告的情况描述是否一致",
+          "rule_key": ""
+        },
+        {
+          "id": "N6-08",
+          "no": 8,
+          "title": "评估假设一致性",
+          "engine": "ai",
+          "severity": "medium",
+          "source": "提示词6-第二步",
+          "desc": "一般假设的内容是否一致；特殊假设的内容是否一致；假设条件对评估结论影响的提示是否一致",
+          "rule_key": ""
+        }
+      ]
+    },
+    {
+      "id": "N7",
+      "no": "⑦",
+      "name": "说明↔收益法联查",
+      "type": "cross",
+      "inputs": [
+        "B4",
+        "B1"
+      ],
+      "input_text": "说明_收益法 + 收益法底稿块",
+      "desc": "交叉比对说明收益法段与收益法底稿块，重点排查「说明有、Excel 无」与「表号不对应」类问题。",
+      "items": [
+        {
+          "id": "N7-01",
+          "no": 1,
+          "title": "数值一致性",
+          "engine": "hybrid",
+          "severity": "high",
+          "source": "提示词7-第三步",
+          "desc": "说明中引用的预测数据（营业收入、营业成本、期间费用、净利润等）与 Excel 中对应位置的数据是否一致",
+          "rule_key": "cross_doc_values"
+        },
+        {
+          "id": "N7-02",
+          "no": 2,
+          "title": "折现率参数一致性",
+          "engine": "hybrid",
+          "severity": "medium",
+          "source": "提示词7-第三步",
+          "desc": "说明中描述的无风险收益率、市场风险溢价、β 系数、特定风险系数、加权平均资本成本等与 Excel 中是否一致",
+          "rule_key": "cross_doc_values"
+        },
+        {
+          "id": "N7-03",
+          "no": 3,
+          "title": "最终结论一致性",
+          "engine": "hybrid",
+          "severity": "high",
+          "source": "提示词7-第四步",
+          "desc": "说明中引用的评估结论、经营性资产价值、企业整体价值、股东全部权益价值等汇总值是否与 Excel 最终结果一致",
+          "rule_key": "conclusion_match"
+        },
+        {
+          "id": "N7-04",
+          "no": 4,
+          "title": "预测逻辑描述与 Excel 公式匹配",
+          "engine": "ai",
+          "severity": "medium",
+          "source": "提示词7-第三步",
+          "desc": "说明中描述的增长逻辑是否与 Excel 实际计算逻辑一致",
+          "rule_key": ""
+        },
+        {
+          "id": "N7-05",
+          "no": 5,
+          "title": "模型结构描述与 Excel 实际相符",
+          "engine": "ai",
+          "severity": "medium",
+          "source": "提示词7-第四步",
+          "desc": "说明描述的模型结构（收益期限划分、预测期与永续期关系、各表间的勾稽关系等）是否与 Excel 实际模型一致",
+          "rule_key": ""
+        },
+        {
+          "id": "N7-06",
+          "no": 6,
+          "title": "参数选取依据与 Excel 数值匹配",
+          "engine": "hybrid",
+          "severity": "medium",
+          "source": "提示词7-第四步",
+          "desc": "说明中描述的折现率计算过程及各项参数是否与 Excel 中一致",
+          "rule_key": "cross_doc_values"
+        },
+        {
+          "id": "N7-07",
+          "no": 7,
+          "title": "假设条件描述与 Excel 设置一致",
+          "engine": "ai",
+          "severity": "medium",
+          "source": "提示词7-第四步",
+          "desc": "说明中描述的重大假设（如永续增长率、营运资金周转率等）是否与 Excel 模型中的设置一致",
+          "rule_key": ""
+        },
+        {
+          "id": "N7-08",
+          "no": 8,
+          "title": "非经营性资产/负债及溢余资产清单匹配",
+          "engine": "hybrid",
+          "severity": "medium",
+          "source": "提示词7-第一步",
+          "desc": "说明中列示的非经营性资产/负债及溢余资产清单，是否与 Excel 中标记的对应科目金额一致",
+          "rule_key": "cross_doc_values"
+        },
+        {
+          "id": "N7-09",
+          "no": 9,
+          "title": "说明中的数据无 Excel 来源",
+          "engine": "rule",
+          "severity": "medium",
+          "source": "提示词7-参考知识",
+          "desc": "说明中出现某数据但 Excel 中找不到对应值",
+          "rule_key": "orphan_value"
+        },
+        {
+          "id": "N7-10",
+          "no": 10,
+          "title": "说明中引用的表号与 Excel 实际表名不对应",
+          "engine": "rule",
+          "severity": "medium",
+          "source": "提示词7-参考知识",
+          "desc": "说明中引用的表号在 Excel 中不存在",
+          "rule_key": "table_ref"
+        }
+      ]
+    },
+    {
+      "id": "N8",
+      "no": "⑧",
+      "name": "说明↔成本法联查",
+      "type": "cross",
+      "inputs": [
+        "B5",
+        "B2"
+      ],
+      "input_text": "说明_成本法 + 成本法底稿块",
+      "desc": "交叉比对说明成本法段与成本法底稿块，含双向「无来源数据」排查。",
+      "items": [
+        {
+          "id": "N8-01",
+          "no": 1,
+          "title": "评估结论一致性",
+          "engine": "hybrid",
+          "severity": "high",
+          "source": "提示词8-第一步/第四步",
+          "desc": "说明中列示的评估结果汇总表数据（各科目分类评估值、总资产、总负债、净资产）是否与 Excel 汇总表一致",
+          "rule_key": "conclusion_match"
+        },
+        {
+          "id": "N8-02",
+          "no": 2,
+          "title": "数值一致性",
+          "engine": "hybrid",
+          "severity": "high",
+          "source": "提示词8-第三步",
+          "desc": "说明中引用的账面价值、评估价值、增值额、增值率与 Excel 中对应位置的数据是否一致",
+          "rule_key": "cross_doc_values"
+        },
+        {
+          "id": "N8-03",
+          "no": 3,
+          "title": "分类汇总一致性",
+          "engine": "hybrid",
+          "severity": "medium",
+          "source": "提示词8-第三步",
+          "desc": "说明中各科目分类的合计值与 Excel 中对应分类汇总是否一致",
+          "rule_key": "summary_match"
+        },
+        {
+          "id": "N8-04",
+          "no": 4,
+          "title": "评估方法描述与 Excel 实际一致",
+          "engine": "ai",
+          "severity": "medium",
+          "source": "提示词8-第三步/第四步",
+          "desc": "说明中描述的各科目评估方法是否与 Excel 中各明细表的实际评估方法一致",
+          "rule_key": ""
+        },
+        {
+          "id": "N8-05",
+          "no": 5,
+          "title": "关键参数描述与 Excel 一致",
+          "engine": "hybrid",
+          "severity": "medium",
+          "source": "提示词8-第三步/第四步",
+          "desc": "说明中描述的成新率、重置成本构成、分成率、折现率等参数是否与 Excel 中一致",
+          "rule_key": "cross_doc_values"
+        },
+        {
+          "id": "N8-06",
+          "no": 6,
+          "title": "特别事项处理一致",
+          "engine": "ai",
+          "severity": "medium",
+          "source": "提示词8-第四步",
+          "desc": "说明中描述的权属瑕疵等特别事项的处理方式是否与 Excel 中的处理一致",
+          "rule_key": ""
+        },
+        {
+          "id": "N8-07",
+          "no": 7,
+          "title": "说明中的数据无 Excel 来源",
+          "engine": "rule",
+          "severity": "medium",
+          "source": "提示词8-参考知识",
+          "desc": "说明中引用了某数据但 Excel 中找不到对应值",
+          "rule_key": "orphan_value"
+        },
+        {
+          "id": "N8-08",
+          "no": 8,
+          "title": "Excel 中的数据无说明解释",
+          "engine": "rule",
+          "severity": "medium",
+          "source": "提示词8-参考知识",
+          "desc": "Excel 中某资产的异常评估值在说明中无解释",
+          "rule_key": "unexplained_value"
+        },
+        {
+          "id": "N8-09",
+          "no": 9,
+          "title": "说明中引用的表号与 Excel 实际表名不对应",
+          "engine": "rule",
+          "severity": "medium",
+          "source": "提示词8-参考知识",
+          "desc": "说明中引用的表号在 Excel 中不存在",
+          "rule_key": "table_ref"
+        }
+      ]
+    },
+    {
+      "id": "N9",
+      "no": "⑨",
+      "name": "说明↔市场法联查",
+      "type": "cross",
+      "inputs": [
+        "B6",
+        "B3"
+      ],
+      "input_text": "说明_市场法 + 市场法底稿块",
+      "desc": "交叉比对说明市场法段与市场法底稿块，聚焦可比公司、价值比率、修正体系与 DLOM。",
+      "items": [
+        {
+          "id": "N9-01",
+          "no": 1,
+          "title": "可比公司描述与 Excel 名单一致",
+          "engine": "hybrid",
+          "severity": "high",
+          "source": "同提示词7/8比对逻辑",
+          "desc": "说明中列举的可比公司名称/股票代码，与 Excel\"可比公司列表\"中的公司名称/代码是否完全对应",
+          "rule_key": "peer_list"
+        },
+        {
+          "id": "N9-02",
+          "no": 2,
+          "title": "数值一致性",
+          "engine": "hybrid",
+          "severity": "high",
+          "source": "同提示词7第三步",
+          "desc": "说明中引用的各可比公司财务数据、价值比率等与 Excel 中对应位置的数据是否一致",
+          "rule_key": "cross_doc_values"
+        },
+        {
+          "id": "N9-03",
+          "no": 3,
+          "title": "价值比率选取依据一致",
+          "engine": "ai",
+          "severity": "medium",
+          "source": "同提示词8第三步",
+          "desc": "说明中描述的价值比率（PE/PB/PS/EV/EBITDA）选取理由，与 Excel 实际采用的价值比率是否一致",
+          "rule_key": ""
+        },
+        {
+          "id": "N9-04",
+          "no": 4,
+          "title": "修正因素体系描述与 Excel 一致",
+          "engine": "ai",
+          "severity": "medium",
+          "source": "同提示词8第四步",
+          "desc": "说明中描述的规模修正、增长率修正、流动性修正等修正因素，与 Excel 修正计算表中的修正体系是否一致",
+          "rule_key": ""
+        },
+        {
+          "id": "N9-05",
+          "no": 5,
+          "title": "缺乏流动性折扣（DLOM）描述与 Excel 一致",
+          "engine": "hybrid",
+          "severity": "medium",
+          "source": "同提示词7第四步",
+          "desc": "说明中描述的 DLOM 选取依据，与 Excel 中 DLOM 计算表的取值是否一致",
+          "rule_key": "cross_doc_values"
+        },
+        {
+          "id": "N9-06",
+          "no": 6,
+          "title": "估值结论一致性",
+          "engine": "hybrid",
+          "severity": "high",
+          "source": "同提示词7第四步",
+          "desc": "说明中引用的市场法估值结论，与 Excel 最终计算表的结果是否一致",
+          "rule_key": "conclusion_match"
+        },
+        {
+          "id": "N9-07",
+          "no": 7,
+          "title": "说明中的数据无 Excel 来源",
+          "engine": "rule",
+          "severity": "medium",
+          "source": "同提示词7/8参考知识",
+          "desc": "说明中出现某数据但 Excel 中找不到对应值",
+          "rule_key": "orphan_value"
+        },
+        {
+          "id": "N9-08",
+          "no": 8,
+          "title": "说明中引用的表号与 Excel 实际表名不对应",
+          "engine": "rule",
+          "severity": "medium",
+          "source": "同提示词7/8参考知识",
+          "desc": "说明中引用的表号在 Excel 中不存在",
+          "rule_key": "table_ref"
+        }
+      ]
+    }
+  ]
+}

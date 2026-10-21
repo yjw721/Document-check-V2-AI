@@ -1,66 +1,211 @@
 {
-  "meta": {
-    "name": "自定义词库",
-    "offline_only": true,
-    "desc": "用户在界面【词库管理】中自建的离线词库，本地持久化，零联网。"
-  },
   "groups": [
     {
       "id": "wb_demo",
       "name": "敏感词示例库",
       "module": "text_word",
       "scope": "all",
-      "enabled": true,
+      "enabled": false,
       "entries": [
         {
           "id": "e_demo1",
           "keyword": "_tmp",
           "tag": "临时占位",
           "suggestion": "文档中残留「_tmp」占位符，请确认是否为草稿遗留内容。",
-          "enabled": true
+          "enabled": false
         },
         {
           "id": "e_demo2",
           "keyword": "TODO",
           "tag": "待办标记",
           "suggestion": "文档中出现「TODO」待办标记，正式归档前请处理或删除。",
-          "enabled": true
+          "enabled": false
         }
       ]
     },
     {
-      "id": "ai_learning_wb",
-      "name": "本地AI学习",
+      "id": "wbfd0de567",
+      "name": "外部导入 · 通用检测规则库 · 23 条",
       "module": "text_word",
       "scope": "all",
-      "enabled": true,
+      "enabled": false,
       "entries": [
         {
-          "id": "e4b486951",
-          "keyword": "我们立马搞定评估工作",
-          "tag": "本地AI自学习生成-人工校对样本",
-          "suggestion": "我们尽快完成评估工作",
-          "enabled": true,
-          "source": "ai_learning",
-          "sample_id": "s460e9a22"
+          "id": "ec772236a",
+          "keyword": "评诂",
+          "tag": "笔误警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 1 页：范本标准写法为「评估」。若当前文档使用「评诂」，疑似错别字 / 术语误写，请核对修正。",
+          "enabled": false
         },
         {
-          "id": "ec55e322b",
-          "keyword": "并尽快安排专家审核",
-          "tag": "本地AI自学习生成-人工校对样本",
-          "suggestion": "并立即安排专家审核",
-          "enabled": true,
-          "source": "ai_learning",
-          "sample_id": "s460e9a22"
+          "id": "e7f4a0770",
+          "keyword": "资産",
+          "tag": "笔误警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 1 页：范本标准写法为「资产」。若当前文档使用「资産」，疑似错别字 / 术语误写，请核对修正。",
+          "enabled": false
         },
         {
-          "id": "e70c2f67d",
-          "keyword": "请尽快落实处理",
-          "tag": "本地AI自学习生成-人工校对样本",
-          "suggestion": "请尽快处理落实",
-          "enabled": true,
-          "source": "ai_learning",
-          "sample_id": "s460e9a22"
+          "id": "e7d02def7",
+          "keyword": "审记",
+          "tag": "笔误警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 4 页：范本标准写法为「审计」。若当前文档使用「审记」，疑似错别字 / 术语误写，请核对修正。",
+          "enabled": false
+        },
+        {
+          "id": "ecd933f89",
+          "keyword": "其它",
+          "tag": "笔误警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 5 页：范本标准写法为「其他」。若当前文档使用「其它」，疑似错别字 / 术语误写，请核对修正。",
+          "enabled": false
+        },
+        {
+          "id": "eee63875d",
+          "keyword": "一定",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 7 页：范本原文含「一定」。该表述属绝对化用语 / 承诺性描述，在执业报告中应谨慎使用，建议人工核查是否违反执业规范。",
+          "enabled": false
+        },
+        {
+          "id": "e21ddaffc",
+          "keyword": "做为",
+          "tag": "笔误警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 10 页：范本标准写法为「作为」。若当前文档使用「做为」，疑似错别字 / 术语误写，请核对修正。",
+          "enabled": false
+        },
+        {
+          "id": "ed6d9bdc7",
+          "keyword": "权宜",
+          "tag": "笔误警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 10 页：范本标准写法为「权益」。若当前文档使用「权宜」，疑似错别字 / 术语误写，请核对修正。",
+          "enabled": false
+        },
+        {
+          "id": "e32950f8e",
+          "keyword": "工允",
+          "tag": "笔误警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 10 页：范本标准写法为「公允」。若当前文档使用「工允」，疑似错别字 / 术语误写，请核对修正。",
+          "enabled": false
+        },
+        {
+          "id": "ede8b0107",
+          "keyword": "负馈",
+          "tag": "笔误警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 11 页：范本标准写法为「负债」。若当前文档使用「负馈」，疑似错别字 / 术语误写，请核对修正。",
+          "enabled": false
+        },
+        {
+          "id": "e0e7ef18c",
+          "keyword": "既使",
+          "tag": "笔误警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 12 页：范本标准写法为「即使」。若当前文档使用「既使」，疑似错别字 / 术语误写，请核对修正。",
+          "enabled": false
+        },
+        {
+          "id": "ee3ed950b",
+          "keyword": "合算",
+          "tag": "笔误警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 12 页：范本标准写法为「核算」。若当前文档使用「合算」，疑似错别字 / 术语误写，请核对修正。",
+          "enabled": false
+        },
+        {
+          "id": "ee31c78cd",
+          "keyword": "收溢",
+          "tag": "笔误警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 12 页：范本标准写法为「收益」。若当前文档使用「收溢」，疑似错别字 / 术语误写，请核对修正。",
+          "enabled": false
+        },
+        {
+          "id": "eab379ef9",
+          "keyword": "保证",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 15 页：范本原文含「保证」。该表述属绝对化用语 / 承诺性描述，在执业报告中应谨慎使用，建议人工核查是否违反执业规范。",
+          "enabled": false
+        },
+        {
+          "id": "e0b8d6352",
+          "keyword": "绝对",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 15 页：范本原文含「绝对」。该表述属绝对化用语 / 承诺性描述，在执业报告中应谨慎使用，建议人工核查是否违反执业规范。",
+          "enabled": false
+        },
+        {
+          "id": "e89882bc8",
+          "keyword": "唯一",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 15 页：范本原文含「唯一」。该表述属绝对化用语 / 承诺性描述，在执业报告中应谨慎使用，建议人工核查是否违反执业规范。",
+          "enabled": false
+        },
+        {
+          "id": "ec7fcccec",
+          "keyword": "爆表",
+          "tag": "笔误警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 16 页：范本标准写法为「报表」。若当前文档使用「爆表」，疑似错别字 / 术语误写，请核对修正。",
+          "enabled": false
+        },
+        {
+          "id": "ebad4fbaf",
+          "keyword": "确保",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 24 页：范本原文含「确保」。该表述属绝对化用语 / 承诺性描述，在执业报告中应谨慎使用，建议人工核查是否违反执业规范。",
+          "enabled": false
+        },
+        {
+          "id": "e7af3b26a",
+          "keyword": "综和",
+          "tag": "笔误警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 24 页：范本标准写法为「综合」。若当前文档使用「综和」，疑似错别字 / 术语误写，请核对修正。",
+          "enabled": false
+        },
+        {
+          "id": "e1f06a8f5",
+          "keyword": "必然",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 25 页：范本原文含「必然」。该表述属绝对化用语 / 承诺性描述，在执业报告中应谨慎使用，建议人工核查是否违反执业规范。",
+          "enabled": false
+        },
+        {
+          "id": "e55721dc5",
+          "keyword": "现金流动量",
+          "tag": "笔误警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 26 页：范本标准写法为「现金流量」。若当前文档使用「现金流动量」，疑似错别字 / 术语误写，请核对修正。",
+          "enabled": false
+        },
+        {
+          "id": "ea59e0767",
+          "keyword": "无风险",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 28 页：范本原文含「无风险」。该表述属绝对化用语 / 承诺性描述，在执业报告中应谨慎使用，建议人工核查是否违反执业规范。",
+          "enabled": false
+        },
+        {
+          "id": "e57bda3d9",
+          "keyword": "利闰",
+          "tag": "笔误警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 28 页：范本标准写法为「利润」。若当前文档使用「利闰」，疑似错别字 / 术语误写，请核对修正。",
+          "enabled": false
+        },
+        {
+          "id": "e0b9eedd5",
+          "keyword": "最佳",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 62 页：范本原文含「最佳」。该表述属绝对化用语 / 承诺性描述，在执业报告中应谨慎使用，建议人工核查是否违反执业规范。",
+          "enabled": false
+        }
+      ]
+    },
+    {
+      "id": "wca356f81",
+      "name": "规范术语",
+      "module": "text_word",
+      "scope": "all",
+      "enabled": false,
+      "entries": [
+        {
+          "id": "ee6c7696d",
+          "keyword": "资产价值",
+          "tag": "规范术语",
+          "suggestion": "资产价值评估结果",
+          "enabled": false
         }
       ]
     }

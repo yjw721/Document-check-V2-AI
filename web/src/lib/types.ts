@@ -38,6 +38,9 @@ export interface FileResult {
   status: "ok" | "error" | string;
   active_issue_count: number;
   file_path: string;
+  /* AI 智能核验阶段状态（"" 未核验 / ok 完成 / skip 跳过 / fail 失败 / partial 部分失败） */
+  ai_status?: string;
+  ai_note?: string;
 }
 
 export interface FilesData {
@@ -94,6 +97,17 @@ export interface TaskSnapshot {
   error: string;
   result?: ScanResult | null;
   ai_stream?: AiStream | null;
+  ai_summary?: AiTaskSummary | null;
+}
+
+/** AI 核验阶段汇总（等待界面展示） */
+export interface AiTaskSummary {
+  files: number;
+  hit: number;
+  ok: number;
+  skip: number;
+  fail: number;
+  partial: number;
 }
 
 export interface TaskStartResult {
@@ -125,6 +139,10 @@ export interface CustomRule {
   severity: Severity;
   tag: string;
   suggestion: string;
+  /** 生成来源机器码（AI 生成渠道 / 自学习写入） */
+  source?: string;
+  /** 生成来源中文名，如「AI对话创建」 */
+  source_label?: string;
 }
 export interface CustomRuleGroup {
   id: string;
@@ -145,6 +163,10 @@ export interface WordEntry {
   tag: string;
   suggestion: string;
   enabled: boolean;
+  /** 生成来源机器码（AI 生成渠道 / 自学习写入） */
+  source?: string;
+  /** 生成来源中文名，如「AI对话创建」 */
+  source_label?: string;
 }
 export interface WordGroup {
   id: string;
@@ -226,7 +248,7 @@ export interface UISettings {
   sidebar_default_collapsed?: boolean;
   animation_enabled?: boolean;
   theme_accent?: "blue" | "teal" | "purple" | "slate" | "amber" | string;
-  theme_scheme?: "holographic" | "dark" | string;
+  theme_scheme?: "holographic" | "dark" | "ink" | string;
   accent_color?: string;
   table_row_height?: "compact" | "cozy" | "comfortable" | string;
   page_size?: number;
@@ -284,6 +306,33 @@ export interface AiSettings {
   active_preset?: string;
   rate_limit?: AiRateLimit;
   cache?: AiCacheConfig;
+  /* —— 本地知识库（RAG） —— */
+  kb_enabled?: boolean;
+  kb_top_k?: number;
+  embed_enabled?: boolean;
+  embed_model?: string;
+  /* —— 核验行为（可控性增强） —— */
+  retry?: number;
+  verify_scope?: "all" | "issues" | string;
+  fail_as_issue?: boolean;
+  /* —— 增强审核力度 —— */
+  deep_review?: boolean;
+  strict_grounding?: boolean;
+  min_confidence?: number;
+  /* —— 专项技能（SKILL） —— */
+  active_skills?: string[];        // 启用的技能 id 集合（内置 + 自定义）
+  custom_skills?: AiSkill[];       // 用户自定义技能库
+}
+
+/* ---------- AI 专项技能（SKILL） ---------- */
+export interface AiSkill {
+  id: string;
+  name: string;
+  description?: string;
+  prompt?: string;                 // 注入系统提示的专项核验指令
+  default_on?: boolean;            // 仅内置技能：是否默认启用
+  file_types?: string;             // 适用文件类型（逗号分隔短标签：doc/xls/pdf/txt/all）
+  default_severity?: string;       // 建议严重度：high/medium/low/空
 }
 
 /* ---------- AI 自定义提示词预设 ---------- */
@@ -326,11 +375,26 @@ export interface AiActivityLog {
   [k: string]: unknown;
 }
 
+/* ---------- 通用操作日志（规则/词库保存等） ---------- */
+export interface ActivityLog {
+  ts: string;
+  module: string;
+  action: string;
+  operator: string;
+  ok: boolean;
+  detail: string;
+  [k: string]: unknown;
+}
+
 /* ---------- AI 规则/词库生成（对话式 + 文档自建） ---------- */
 export interface AiBuildEntry {
   keyword: string;
   tag: string;
   suggestion: string;
+  /** 来源机器码：ai_dialogue / ai_text / ai_doc / ai_learning */
+  source?: string;
+  /** 面向用户的来源名，如「AI对话创建」 */
+  source_label?: string;
 }
 export interface AiBuildWordbank {
   name: string;
@@ -342,6 +406,10 @@ export interface AiBuildRule {
   pattern: string;
   severity: Severity | string;
   suggestion: string;
+  /** 来源机器码：ai_dialogue / ai_text / ai_doc / ai_learning */
+  source?: string;
+  /** 面向用户的来源名，如「AI对话创建」 */
+  source_label?: string;
 }
 export interface AiBuildResult {
   wordbanks: AiBuildWordbank[];
@@ -381,6 +449,8 @@ export interface BuildStartResp {
 /* 生成过程日志轮询响应（与自学习推理流同构） */
 export interface BuildLogsResp {
   logs: LearnLogEntry[];
+  /** 服务端日志总条数；下次轮询作为 since 传入即可只取增量 */
+  offset?: number;
   state: {
     running: boolean;
     done: boolean;
@@ -388,6 +458,8 @@ export interface BuildLogsResp {
     message?: string;
     result?: AiBuildResult;
     filter?: RuleFilterStat;
+    /** 任务已被用户中止 */
+    cancelled?: boolean;
   };
 }
 
@@ -420,6 +492,8 @@ export interface LearnLogEntry {
 export interface LearnLogsResp {
   ok: boolean;
   logs: LearnLogEntry[];
+  /** 服务端日志总条数；下次轮询作为 since 传入即可只取增量 */
+  offset?: number;
   state: {
     running: boolean;
     done: boolean;
@@ -432,6 +506,20 @@ export interface LearnLogsResp {
       filtered: number;
       standard_expression?: string;
     };
+    /** 当前阶段机器名：start / prompt / infer / parse / validate / done */
+    stage?: string;
+    /** 学习进度百分比 0-100（后端按阶段 + 推理输出量实时估算） */
+    progress?: number;
+    /** 模型已输出字符数 */
+    chars?: number;
+    /** 是否已触发「首次无产出自动重试」 */
+    retry?: boolean;
+    /** 累计耗时（秒），查询时实时计算 */
+    elapsed_sec?: number;
+    /** 输出速率（字/秒） */
+    chars_per_sec?: number;
+    /** 任务已被用户中止 */
+    cancelled?: boolean;
   };
 }
 
@@ -444,7 +532,8 @@ export interface AiMemorySourceStatus {
   available: boolean;
   valid: boolean;
   files: { name: string; path: string }[];
-  revised: string | null;
+  /** 已配对的修订文档信息（后端返回对象而非文件名字符串） */
+  revised: { name: string; path: string; time: string } | null;
   message: string;
 }
 
@@ -575,4 +664,251 @@ export interface ScanCleanResp {
   removed: number;
   backup_file?: string;
   stats?: ScanStats;
+}
+
+/* ============================================================
+   资产评估报告智能核查（四阶段闭环 · 9 节点 / 96 事项）
+   与后端 /api/valuation/* 契约对齐
+   ============================================================ */
+
+export interface ValSlotMeta {
+  key: string;
+  name: string;
+  kind: "doc" | "excel";
+  ext: string[];
+  need: boolean;
+}
+
+export interface ValStage {
+  id: string;
+  no: string;
+  name: string;
+  color?: string;
+}
+
+export interface ValBlock {
+  id: string;
+  name: string;
+  kind: string;
+  from: string;
+  serve: string;
+}
+
+export interface ValItem {
+  id: string;
+  title: string;
+  engine: string;
+  severity?: string;
+}
+
+export interface ValNode {
+  id: string;
+  no: string;
+  name: string;
+  type: string;
+  inputs: string[];
+  item_total: number;
+  items: ValItem[];
+}
+
+export interface ValMeta {
+  slots: ValSlotMeta[];
+  stages: ValStage[];
+  blocks: ValBlock[];
+  nodes: ValNode[];
+  node_count: number;
+  item_count: number;
+}
+
+export interface ValUploadedFile {
+  slot: string;
+  name: string;
+  size: number;
+}
+
+export interface ValUploadResp {
+  ok: boolean;
+  session_id: string;
+  files: ValUploadedFile[];
+}
+
+export interface ValRunResp {
+  ok: boolean;
+  task_id: string;
+  use_ai: boolean;
+}
+
+export interface ValFinding {
+  id: string;
+  node_id: string;
+  node_no: string;
+  node_name: string;
+  item_id: string;
+  item_no: number;
+  item_title: string;
+  source: string;
+  engine: string;
+  severity: string;
+  file: string;
+  block: string;
+  location: string;
+  detail: string;
+  snippet: string;
+  suggestion: string;
+  state: string;
+  duplicate_of: string;
+  merged_count: number;
+  origin: string;
+}
+
+export interface ValSummary {
+  node_total: number;
+  node_done: number;
+  node_skipped: number;
+  item_total: number;
+  item_done: number;
+  findings_raw: number;
+  dedup_merged: number;
+  review_removed: number;
+  review_added: number;
+  total: number;
+  high: number;
+  medium: number;
+  low: number;
+  by_node: Record<string, number>;
+  by_origin: Record<string, number>;
+}
+
+export interface ValNodeBrief {
+  id: string;
+  severity: string;
+  origin: string;
+  location: string;
+  detail: string;
+  item_id: string;
+  item_title: string;
+}
+
+export interface ValNodeRun {
+  node_id: string;
+  node_no: string;
+  node_name: string;
+  node_type: string;
+  inputs: string[];
+  status: string;
+  item_total: number;
+  item_done: number;
+  rule_count: number;
+  ai_count: number;
+  message: string;
+  seconds: number;
+  finding_brief: ValNodeBrief[];
+}
+
+export interface ValPreItem {
+  slot: string;
+  file: string;
+  message: string;
+  clean?: {
+    hidden_sheets?: string[];
+    defined_names?: number;
+    external_links?: number;
+  };
+}
+
+export interface ValBlockRun {
+  id: string;
+  name: string;
+  kind: string;
+  source_slot: string;
+  source_file?: string;
+  chars?: number;
+  general_sheets?: string[];
+  stats?: { own_sheets?: string[] };
+}
+
+export interface ValReview {
+  ok: boolean;
+  conclusion?: string;
+  removed?: Record<string, string>;
+  added_count?: number;
+}
+
+export interface ValResult {
+  status: string;
+  stage: string;
+  percent: number;
+  message: string;
+  logs: string[];
+  preprocess: {
+    items: ValPreItem[];
+    blocked?: boolean;
+    blocked_message?: string;
+    message?: string;
+  };
+  split: { blocks: ValBlockRun[] };
+  nodes: ValNodeRun[];
+  summary: ValSummary;
+  findings: ValFinding[];
+  review?: ValReview;
+  seconds?: number;
+}
+
+export interface ValTaskSnapshot {
+  task_id: string;
+  status: string;
+  progress: number;
+  stage: string;
+  stage_text: string;
+  logs: string[];
+  error: string;
+  result: ValResult | null;
+  done: boolean;
+}
+
+export interface ValResultResp {
+  ready: boolean;
+  status: string;
+  progress?: number;
+  result?: ValResult;
+}
+
+/* ---------- 本地知识库（RAG 检索问答） ---------- */
+export interface KbDoc {
+  id: string;
+  name: string;
+  size: number;
+  chars: number;
+  chunks: number;
+  added_at: string;
+}
+export interface KbStatus {
+  ok: boolean;
+  docs: KbDoc[];
+  total_chunks: number;
+  embed_model: string;
+  embed_available: boolean;
+  updated_at: string;
+}
+export interface KbSource {
+  file: string;
+  section: string;
+  loc: string;
+  snippet: string;
+  score: number;
+  doc_id: string;
+}
+export interface KbAskResp {
+  ok: boolean;
+  answer: string;
+  sources: KbSource[];
+  embed_used: boolean;
+  embed_model: string;
+  elapsed: number;
+}
+export interface KbUploadResp {
+  ok: boolean;
+  added: number;
+  docs: { id: string; name: string; chars: number; chunks: number }[];
+  errors: string[];
 }

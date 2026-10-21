@@ -1,15 +1,20 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import AppLayout from "./components/layout/AppLayout";
+import ErrorBoundary from "./components/ErrorBoundary";
 import OverviewPage from "./pages/OverviewPage";
 import DetectionPage from "./pages/DetectionPage";
 import UnifiedPage from "./pages/UnifiedPage";
 import AdminPage from "./pages/AdminPage";
 import SettingsPage from "./pages/SettingsPage";
 import AiConfigPage from "./pages/AiConfigPage";
+import KbPage from "./pages/KbPage";
 import { ToastProvider } from "./components/ui/Toast";
 import { OverlayProvider } from "./lib/ui";
+import { TaskProvider } from "./lib/taskState";
 import { DET_TABS, NAV, UNI_TABS } from "./lib/constants";
-import { api } from "./lib/api";
+import { api, clearAccessToken } from "./lib/api";
+import { AccessGate } from "./components/ui/AccessGate";
+import { navGuard, LEAVE_CONFIRM_MSG } from "./lib/unsaved";
 import { applyTheme } from "./lib/theme";
 
 /* ---------- hash 解析：兼容旧路由自动映射 ---------- */
@@ -63,6 +68,31 @@ function App() {
   );
   const [counts, setCounts] = useState<{ files: number; issues: number }>({ files: 0, issues: 0 });
   const [role, setRole] = useState<"admin" | "user">("admin");
+  const [auth, setAuth] = useState<"checking" | "locked" | "open">("checking");
+
+  /* 访问口令门禁：启动探针 + 全局 401 兜底 */
+  useEffect(() => {
+    let alive = true;
+    api
+      .securityPing()
+      .then((r) => {
+        if (!alive) return;
+        setAuth(!r.auth_required || r.authorized ? "open" : "locked");
+      })
+      .catch(() => alive && setAuth("locked"));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const onUnauthorized = () => {
+      clearAccessToken();
+      setAuth("locked");
+    };
+    window.addEventListener("docchk:unauthorized", onUnauthorized);
+    return () => window.removeEventListener("docchk:unauthorized", onUnauthorized);
+  }, []);
 
   const { view, detTab, uniTab } = useMemo(() => parseHash(hash), [hash]);
   /* 普通用户不可见 / 不可进入「AI 配置」后台模块 */
@@ -98,8 +128,10 @@ function App() {
 
   /* 导航 */
   const navigate = useCallback((key: string) => {
+    if (navGuard.dirty && key !== effView && !window.confirm(LEAVE_CONFIRM_MSG)) return;
     window.location.hash = "#" + key;
-  }, []);
+  }, [effView]);
+
 
   /* 顶部 chips 刷新 */
   useEffect(() => {
@@ -128,10 +160,23 @@ function App() {
           ? "后台管理 · AI 配置"
           : "本地离线 · 零联网";
 
+  /* 口令校验完成前：不挂载业务模块，避免未鉴权请求刷屏 */
+  if (auth === "checking") {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center bg-[var(--bg)]">
+        <div className="text-sm text-[var(--text-dim)]">正在连接服务…</div>
+      </div>
+    );
+  }
+  if (auth === "locked") {
+    return <AccessGate onAuthed={() => setAuth("open")} />;
+  }
+
   return (
     <ToastProvider>
       <OverlayProvider>
-        <AppLayout
+        <TaskProvider>
+          <AppLayout
           collapsed={collapsed}
           onToggle={toggleSide}
           active={effView}
@@ -144,13 +189,18 @@ function App() {
           onToggleTheme={toggleTheme}
           hiddenNav={role !== "admin" ? ["aiconfig"] : []}
         >
-          {effView === "overview" && <OverviewPage />}
-          {effView === "detection" && <DetectionPage tab={detTab} onTab={(t) => (window.location.hash = `#detection/${t}`)} />}
-          {effView === "unified" && <UnifiedPage tab={uniTab} onTab={(t) => (window.location.hash = `#unified/${t}`)} />}
-          {effView === "aiconfig" && <AiConfigPage />}
-          {effView === "admin" && <AdminPage />}
-          {effView === "settings" && <SettingsPage />}
+          {/* 页面级错误边界：单个模块崩溃只降级为错误卡片，不再整站白屏 */}
+          <ErrorBoundary label={navItem.name}>
+            {effView === "overview" && <OverviewPage />}
+            {effView === "detection" && <DetectionPage tab={detTab} onTab={(t) => (window.location.hash = `#detection/${t}`)} />}
+            {effView === "unified" && <UnifiedPage tab={uniTab} onTab={(t) => (window.location.hash = `#unified/${t}`)} />}
+            {effView === "kb" && <KbPage />}
+            {effView === "aiconfig" && <AiConfigPage />}
+            {effView === "admin" && <AdminPage />}
+            {effView === "settings" && <SettingsPage />}
+          </ErrorBoundary>
         </AppLayout>
+        </TaskProvider>
       </OverlayProvider>
     </ToastProvider>
   );

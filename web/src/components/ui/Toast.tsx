@@ -29,7 +29,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <Ctx.Provider value={{ toast }}>
       {children}
-      <div className="fixed bottom-6 right-6 z-[80] flex flex-col gap-2.5">
+      <div className="fixed bottom-6 right-6 flex flex-col gap-2.5" style={{ zIndex: 'var(--z-toast)' }}>
         {items.map((t) => (
           <div key={t.id} className={`holo-toast ${t.kind}`}>
             {t.msg}

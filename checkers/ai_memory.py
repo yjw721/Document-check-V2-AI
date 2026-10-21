@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import csv
 import difflib
 import io
@@ -52,6 +53,15 @@ SRC_META_PATH = os.path.join(MEM_DIR, "source_docs.json")
 
 _LEARN_LOCK = threading.Lock()
 _LEARN_TIMEOUT = 900.0
+
+
+class LearnAborted(Exception):
+    """用户主动中止学习（由上层 token 回调抛出，用于中断本地流式推理）。
+
+    该异常必须穿透 token 回调的容错包装向上冒泡，否则中止指令会被吞掉、
+    本地算力无法及时释放；learn_sample 也不得把它当作普通失败写进样本状态。
+    """
+
 
 # 推理过程日志缓冲（sid → 阶段/流式日志），用于前端实时展示本地推理过程
 _LEARN_LOGS: Dict[str, List[Dict[str, Any]]] = {}
@@ -514,6 +524,8 @@ def learn_sample(sid: str, ai_cfg: Dict[str, Any],
     on_log(stage, info)：阶段回调；on_token(text, kind)：推理 token 流回调。
     auto_log=True 时将阶段日志与 token 流写入内部缓冲（learn_logs 查询），
     供前端轮询实时展示本地推理过程。
+    
+    强制超时保护：_LEARN_TIMEOUT 秒后自动终止，防止本地模型卡死阻塞线程。
     """
     start_ts = time.time()
     _learn_trim(sid)
@@ -539,6 +551,9 @@ def learn_sample(sid: str, ai_cfg: Dict[str, Any],
         if on_token:
             try:
                 on_token(text, kind)
+            except LearnAborted:
+                # 中止指令必须上抛，否则本地流式推理无法被打断
+                raise
             except Exception:  # noqa: BLE001
                 pass
         if auto_log:
@@ -576,13 +591,34 @@ def learn_sample(sid: str, ai_cfg: Dict[str, Any],
                                   f"样本差异 {len(diffs)} 条，取前 {min(10, len(diffs))} 条推理"})
 
             log("infer", {"text": "本地模型推理中…（流式输出，CPU 推理较慢请耐心等待）"})
-            obj = _call_learn(ai_cfg, diffs, on_token=tok)
+            
+            # 带超时保护的推理调用
+            def _call_with_timeout():
+                return _call_learn(ai_cfg, diffs, on_token=tok)
+            
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                fut = ex.submit(_call_with_timeout)
+                try:
+                    obj = fut.result(timeout=_LEARN_TIMEOUT)
+                except concurrent.futures.TimeoutError:
+                    raise AiError(f"本地模型推理超时（>{_LEARN_TIMEOUT}秒），请检查模型状态或减少差异片段数量")
+            
             entries = _norm_corrections(obj.get("corrections"))
             rules = _norm_rules(obj.get("rules"))
             if not entries and not rules:
                 # 本地 CPU 推理偶发输出截断/重复：自动重试一次
                 log("infer", {"text": "首次输出未提炼出可用内容，自动重试一次…"})
-                obj = _call_learn(ai_cfg, diffs, on_token=tok)
+                
+                def _call_with_timeout():
+                    return _call_learn(ai_cfg, diffs, on_token=tok)
+                
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                    fut = ex.submit(_call_with_timeout)
+                    try:
+                        obj = fut.result(timeout=_LEARN_TIMEOUT)
+                    except concurrent.futures.TimeoutError:
+                        raise AiError(f"本地模型推理超时（>{_LEARN_TIMEOUT}秒），重试失败")
+                
                 entries = _norm_corrections(obj.get("corrections"))
                 rules = _norm_rules(obj.get("rules"))
             if not entries and not rules:
@@ -609,6 +645,13 @@ def learn_sample(sid: str, ai_cfg: Dict[str, Any],
             log("done", {"text": f"学习完成：产出词条 {stats['entries']} 条、规则 {stats['rules']} 条，"
                                 f"耗时 {time.time() - start_ts:.1f}s，已并入自定义词库/自定义规则"})
             return True, "学习完成", stats
+        except LearnAborted:
+            # 中止不算失败：样本回到「待学习」，可随时重新触发
+            sample["status"] = "pending"
+            sample["error"] = "已中止学习"
+            save_samples(data)
+            log("error", {"text": f"学习已被中止（耗时 {time.time() - start_ts:.1f}s），本次不产出词条/规则"})
+            raise
         except Exception as exc:  # noqa: BLE001 - 学习失败不中断
             sample["status"] = "failed"
             sample["error"] = _friendly_ai_error(exc)

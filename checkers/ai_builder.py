@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import re
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from checkers.ai_checker import (
     AiError, DEFAULTS as _AI_DEFAULTS, _call_ollama, _call_openai,
@@ -27,6 +27,14 @@ from checkers import ai_activity
 # 生成结果里单次最多条目数（防止模型产出过多/过少）
 MAX_ENTRIES = 40
 MAX_RULES = 30
+
+
+class BuildAborted(Exception):
+    """用户主动中止生成（由上层 token 回调抛出，用于中断本地流式推理）。
+
+    该异常必须穿透 token 回调的容错包装向上冒泡，否则流式中止指令会被吞掉、
+    本地算力无法及时释放。
+    """
 
 _SYS_PROMPT = (
     "你是一名文档质量规则工程师，负责把用户的诉求转化为可落地的检测规则与词库。\n"
@@ -161,40 +169,163 @@ def _try_load(segment: str) -> Any:
         return None
 
 
+def _scan_object_end(text: str, start: int) -> int:
+    """字符串感知地配对花括号，返回对象闭合 `}` 的下标；未闭合返回 -1。
+
+    相比「对每个起点盲试所有终点」的组合爆炸（实测 600 段含花括号的思考链
+    耗时近 80s），这里一次线性扫描即可确定唯一正确的闭合位置。
+    """
+    depth = 0
+    in_str = False
+    esc = False
+    i, n = start, len(text)
+    while i < n:
+        ch = text[i]
+        if esc:
+            esc = False
+        elif in_str:
+            if ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+        else:
+            if ch == '"':
+                in_str = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return i
+        i += 1
+    return -1
+
+
+def _salvage_truncated(text: str, start: int) -> Optional[Dict[str, Any]]:
+    """输出被 num_predict 截断时抢救已生成的部分。
+
+    回退到最后一个完整元素的闭合处，再用 _balance_json 补齐外层结构，
+    尽量保住已生成的词库/规则，而不是整批丢弃重来。
+
+    仅在内容以 `{` 起始（确为对象输出被截断）时启用，避免对「思考链 + JSON」
+    这类混合文本做无意义的逐段回退（否则每行 `{` 都要全量重解析，代价极高）。
+    """
+    if text[start:start + 1] != "{":
+        return None
+    cut = text.rfind("}")
+    for _ in range(_MAX_SALVAGE_STEPS):
+        if cut <= start:
+            break
+        obj = _try_load(_balance_json(text[start:cut + 1]))
+        if isinstance(obj, dict) and ("wordbanks" in obj or "rules" in obj):
+            return obj
+        nxt = text.rfind("}", start, cut)
+        if nxt <= start:
+            break
+        cut = nxt
+    return None
+
+
+def _load_span(text: str, start: int) -> Tuple[Optional[Dict[str, Any]], int]:
+    """解析从 start 起的对象，返回 (对象或 None, 解析尝试次数)。
+
+    未闭合时先做整段补齐解析，仍失败则截断抢救。
+    """
+    end = _scan_object_end(text, start)
+    if end >= 0:
+        obj = _try_load(text[start:end + 1])
+        if isinstance(obj, dict):
+            return obj, 1
+        return None, 1
+    obj = _try_load(text[start:])
+    if isinstance(obj, dict):
+        return obj, 1
+    return _salvage_truncated(text, start), 1
+
+
+# 生成结果的特征键，用于快速定位真正的产出对象
+_SCHEMA_KEYS = ("wordbanks", "rules")
+# 解析尝试次数上限：硬约束最坏情况耗时，避免超长输出拖死主流程
+_MAX_PARSE_ATTEMPTS = 240
+# 截断抢救的最大回退步数
+_MAX_SALVAGE_STEPS = 64
+
+
 def _extract_json_obj(content: str) -> Dict[str, Any]:
     """从模型输出中提取 JSON 对象（容忍 ```json 包裹、前后缀文本、尾随逗号与裸引号）。
 
-    候选策略：尝试所有可解析的完整对象；优先选取【含 wordbanks/rules 键】的对象
-    （即真正的生成结果，避免误取思考链中的伪 JSON 碎片），其次取覆盖文本范围最大者。
+    定位策略（由准到宽，避免 O(n²) 组合盲试）：
+      1. 整段 / ```json 代码块直接解析；
+      2. 以 wordbanks、rules 键为锚点向左找最近的外层 `{`，线性配对扫描解析；
+      3. 兜底：遍历所有 `{` 起点做一次配对扫描，取体积最大的可解析对象。
+    全程受 _MAX_PARSE_ATTEMPTS 预算约束。
     """
     text = content.strip()
     m = re.search(r"```(?:json)?\s*(.*?)```", text, re.S)
     if m:
         text = m.group(1).strip()
-    starts = [x.start() for x in re.finditer(r"\{", text)]
-    ends = [x.start() for x in re.finditer(r"\}", text)]
-    if not starts or not ends:
-        raise AiError("模型未返回 JSON 对象")
-    candidates: List[Tuple[int, Dict[str, Any]]] = []
-    for si in range(len(starts)):
-        s = starts[si]
-        for ei in range(len(ends) - 1, -1, -1):
-            e = ends[ei]
-            if e <= s:
+
+    budget = [0]
+    schema_best: Optional[Dict[str, Any]] = None
+
+    def _accept(obj: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """记录含生成结果键的最佳候选。"""
+        nonlocal schema_best
+        if not isinstance(obj, dict):
+            return None
+        if "wordbanks" in obj or "rules" in obj:
+            if schema_best is None or len(json.dumps(obj, ensure_ascii=False)) > len(
+                json.dumps(schema_best, ensure_ascii=False)
+            ):
+                schema_best = obj
+            return obj
+        return None
+
+    # 1) 整段尝试（含截断抢救）
+    if budget[0] < _MAX_PARSE_ATTEMPTS:
+        budget[0] += 1
+        root = _try_load(text)
+        if not isinstance(root, dict):
+            root = _salvage_truncated(text, 0)
+        hit = _accept(root)
+        if hit is not None:
+            return hit
+
+    # 2) 以特征键为锚点定位
+    for key in _SCHEMA_KEYS:
+        for mk in re.finditer(r'"%s"' % key, text):
+            if budget[0] >= _MAX_PARSE_ATTEMPTS:
                 break
-            obj = _try_load(text[s:e + 1])
-            if isinstance(obj, dict):
-                candidates.append((e - s, obj))
-                break  # 该起点已解析出最大端点对象，无需继续缩小范围
-    if not candidates:
-        raise AiError(f"模型返回的 JSON 无法解析：{clip(text, 80)}")
-    # 优先：含生成结果键的对象
-    schema = [obj for _, obj in candidates if ("wordbanks" in obj or "rules" in obj)]
-    if schema:
-        # 同组内取范围最大者（更完整的对象）
-        return max(schema, key=lambda o: len(json.dumps(o, ensure_ascii=False)))
-    # 兜底：范围最大者
-    return max(candidates, key=lambda c: c[0])[1]
+            start = mk.start()
+            while start != -1 and budget[0] < _MAX_PARSE_ATTEMPTS:
+                obj, used = _load_span(text, start)
+                budget[0] += used
+                if _accept(obj) is not None:
+                    # 由内向外首个成功命中即最接近真实产出的完整对象
+                    break
+                start = text.rfind("{", 0, start)
+        if schema_best is not None:
+            return schema_best
+
+    if schema_best is not None:
+        return schema_best
+
+    # 3) 兜底：所有 `{` 起点各做一次配对扫描，取最大者
+    fallback: Optional[Tuple[int, Dict[str, Any]]] = None
+    for mo in re.finditer(r"\{", text):
+        if budget[0] >= _MAX_PARSE_ATTEMPTS:
+            break
+        obj, used = _load_span(text, mo.start())
+        budget[0] += used
+        if isinstance(obj, dict):
+            size = len(json.dumps(obj, ensure_ascii=False))
+            if fallback is None or size > fallback[0]:
+                fallback = (size, obj)
+    if fallback:
+        return fallback[1]
+    if not text:
+        raise AiError("模型未返回任何内容")
+    raise AiError(f"模型返回的 JSON 无法解析：{clip(text, 80)}")
 
 
 def _norm_severity(sev: str) -> str:
@@ -245,8 +376,9 @@ def _parse_result(obj: Dict[str, Any]) -> Dict[str, Any]:
         if mode == "regex":
             try:
                 re.compile(pattern)
-            except re.error as exc:
-                raise AiError(f"规则「{name}」的正则无法编译：{exc}")
+            except re.error:
+                # 单条正则不可编译只丢弃该条，不再拖垮整批生成结果
+                continue
         rls.append({
             "name": clip(name, 40),
             "match_mode": mode,
@@ -305,6 +437,8 @@ def _gen(ai: Dict[str, Any], sys_prompt: str, user_text: str,
         return True, "要点提取完成", {"text": clip(text, 2000)}
     try:
         obj = _extract_json_obj(content)
+        if "wordbanks" not in obj and "rules" not in obj:
+            raise AiError("模型输出中未识别到 wordbanks/rules 结构")
         result = _parse_result(obj)
     except AiError as exc:
         return False, str(exc), empty
@@ -383,6 +517,9 @@ def run_build(kind: str, *, text: str = "", raw: bytes = b"", filename: str = ""
         if on_token:
             try:
                 on_token(t, k)
+            except BuildAborted:
+                # 中止指令必须上抛，否则本地流式推理无法被打断
+                raise
             except Exception:  # noqa: BLE001
                 pass
 

@@ -1,13 +1,14 @@
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 
 /* 全息按钮：rounded-2xl + 渐变/玻璃 + transition-all + 光晕 + active:scale-95 */
-type Variant = "primary" | "ghost" | "danger";
+type Variant = "primary" | "ghost" | "danger" | "outline" | "loading";
 
 interface HoloButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: Variant;
   size?: "md" | "sm";
   icon?: ReactNode;
   children?: ReactNode;
+  loading?: boolean;
 }
 
 const BASE =
@@ -25,6 +26,12 @@ const VARIANTS: Record<Variant, string> = {
   danger:
     "bg-[rgba(255,107,125,0.14)] text-[var(--tone-danger-soft)] border border-[rgba(255,107,125,0.4)] " +
     "hover:bg-[rgba(255,107,125,0.24)] hover:shadow-[0_0_30px_rgba(255,107,125,0.35)]",
+  outline:
+    "bg-transparent text-white border border-white/30 " +
+    "hover:bg-white/10 hover:border-[var(--border-accent-soft)] hover:shadow-[0_0_20px_var(--glow-btn)]",
+  loading:
+    "holo-btn-primary text-[#fff] cursor-wait " +
+    "shadow-[0_0_25px_var(--glow-btn)]",
 };
 
 const SIZES = {
@@ -38,11 +45,24 @@ export default function HoloButton({
   icon,
   children,
   className = "",
+  loading = false,
+  disabled,
   ...rest
 }: HoloButtonProps) {
+  const isLoading = loading || variant === "loading";
+  const effectiveDisabled = disabled || isLoading;
+  
   return (
-    <button className={`${BASE} ${VARIANTS[variant]} ${SIZES[size]} ${className}`} {...rest}>
-      {icon}
+    <button
+      className={`${BASE} ${VARIANTS[variant]} ${SIZES[size]} ${className}`}
+      disabled={effectiveDisabled}
+      aria-busy={isLoading}
+      {...rest}
+    >
+      {isLoading && (
+        <span className="inline-block w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin mr-1" />
+      )}
+      {!isLoading && icon}
       {children}
     </button>
   );

@@ -11,11 +11,10 @@ import EmptyState from "../../components/common/EmptyState";
 import { api } from "../../lib/api";
 import type {
   AiBuildResult,
-  AiBuildRule,
-  AiBuildWordbank,
   AiMemoryData,
   AiMemorySample,
   AiDiff,
+  LearnLogEntry,
   CustomRulesData,
   WordbanksData,
   RuleFilterStat,
@@ -57,6 +56,7 @@ export default function AiCreateTab() {
   const [result, setResult] = useState<AiBuildResult | null>(null);
   const [buildLogs, setBuildLogs] = useState<BuildLogsResp | null>(null);
   const [filterStat, setFilterStat] = useState<RuleFilterStat | null>(null);
+  const [curBid, setCurBid] = useState("");
   const [wbSel, setWbSel] = useState<Record<string, boolean>>({});
   const [ruleSel, setRuleSel] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState<"wb" | "rules" | null>(null);
@@ -122,19 +122,28 @@ export default function AiCreateTab() {
         return;
       }
       const bid = r.bid;
+      setCurBid(bid);
       const label = kind === "dialogue" ? "对话式创建完成"
         : kind === "text" ? "文本式创建完成" : `已阅读「${file!.name}」`;
+      let since = 0;
+      let merged: LearnLogEntry[] = [];
+      let delay = 450;
       while (mountedRef.current) {
         let l: BuildLogsResp;
         try {
-          l = await api.aiBuildLogs(bid);
+          l = await api.aiBuildLogs(bid, since);
         } catch {
           break;
         }
-        setBuildLogs(l);
+        // 增量拼接：仅把本次新增的日志追加到已有数组，避免整表重建
+        if (l.logs.length) merged = merged.concat(l.logs);
+        since = l.offset ?? merged.length;
+        setBuildLogs({ logs: merged, state: l.state });
         const st = l.state;
         if (st.done || !st.running) {
-          if (st.ok && st.result) {
+          if (st.cancelled) {
+            toast(st.message || "已中止生成", "warn");
+          } else if (st.ok && st.result) {
             pick(st.result);
             reportFilter(st.filter, label);
           } else {
@@ -142,12 +151,24 @@ export default function AiCreateTab() {
           }
           break;
         }
-        await new Promise((res) => setTimeout(res, 800));
+        await new Promise((res) => setTimeout(res, delay));
+        if (delay < 1500) delay += 100;
       }
     } catch (e) {
       toast((e as Error).message, "err");
     } finally {
       setBusy(null);
+      setCurBid("");
+    }
+  };
+
+  const cancelBuild = async () => {
+    if (!curBid) return;
+    try {
+      const r = await api.aiBuildCancel(curBid);
+      toast(r.message || "正在停止本地推理…", r.ok ? "warn" : "err");
+    } catch (e) {
+      toast((e as Error).message, "err");
     }
   };
 
@@ -155,35 +176,66 @@ export default function AiCreateTab() {
     if (!result) return;
     setSaving("wb");
     try {
-      const cur: WordbanksData = (await api.wordbanks()).groups ? { groups: (await api.wordbanks()).groups } : { groups: [] };
-      const picked: AiBuildWordbank[] = [];
+      const cur = await api.wordbanks();
+      // 同名分组合并写入，避免多轮生成堆积一堆重复分组
+      const groups: WordbanksData["groups"] = (cur.groups || []).map((g) => ({
+        ...g,
+        entries: [...(g.entries || [])],
+      }));
+      const known = new Set<string>();
+      groups.forEach((g) => (g.entries || []).forEach((e) => known.add((e.keyword || "").trim())));
+
+      const consumed: Array<[number, number]> = [];
+      let added = 0;
+      let dup = 0;
       result.wordbanks.forEach((w, wi) => {
-        const entries = w.entries.filter((_, ei) => wbSel[`w${wi}-${ei}`]);
-        if (entries.length) picked.push({ name: w.name, entries });
-      });
-      if (!picked.length) {
-        toast("未勾选任何词条", "warn");
-        return;
-      }
-      const next = {
-        groups: [
-          ...cur.groups,
-          ...picked.map((w) => ({
+        const picked = w.entries
+          .map((e, ei) => ({ e, ei }))
+          .filter(({ ei }) => wbSel[`w${wi}-${ei}`]);
+        if (!picked.length) return;
+        let target = groups.find((g) => g.name === w.name);
+        if (!target) {
+          target = {
             id: genId("w"),
             name: w.name,
             module: "text_word",
             scope: "all",
             enabled: true,
-            entries: w.entries.map((e) => ({ id: genId("e"), keyword: e.keyword, tag: e.tag, suggestion: e.suggestion, enabled: true })),
-          })),
-        ],
-      };
-      const res = await api.saveWordbanks(next);
-      const n = picked.reduce((t, w) => t + w.entries.length, 0);
+            entries: [],
+          };
+          groups.push(target);
+        }
+        for (const { e, ei } of picked) {
+          consumed.push([wi, ei]);
+          const kw = (e.keyword || "").trim();
+          if (!kw || known.has(kw)) {
+            dup += 1;
+            continue;
+          }
+          known.add(kw);
+          target.entries.push({
+            id: genId("e"),
+            keyword: e.keyword,
+            tag: e.tag,
+            suggestion: e.suggestion,
+            enabled: true,
+            source: e.source,
+            source_label: e.source_label,
+          });
+          added += 1;
+        }
+      });
+      if (!consumed.length) {
+        toast("未勾选任何词条", "warn");
+        return;
+      }
+      const res = await api.saveWordbanks({ groups });
       const flt = res.filtered_entries ?? 0;
-      toast(flt > 0
-        ? `已加入词库 ${n - flt} 条词条，后端过滤无效词条 ${flt} 条（见日志）`
-        : `已加入词库：${n} 条词条`);
+      const parts = [`已加入词库 ${Math.max(added - flt, 0)} 条词条`];
+      if (flt > 0) parts.push(`后端过滤无效 ${flt} 条`);
+      if (dup > 0) parts.push(`库内已存在跳过 ${dup} 条`);
+      toast(parts.join("，"));
+      dropConsumed(consumed, true);
     } catch (e) {
       toast((e as Error).message, "err");
     } finally {
@@ -191,43 +243,95 @@ export default function AiCreateTab() {
     }
   };
 
+  /** 入库后把已处理的条目从待选结果中移除，避免重复点击重复提交。 */
+  const dropConsumed = (consumed: Array<[number, number]>, isWordbank: boolean) => {
+    if (!result) return;
+    let next: AiBuildResult;
+    if (isWordbank) {
+      const drop = new Set(consumed.map(([wi, ei]) => `w${wi}-${ei}`));
+      next = {
+        ...result,
+        wordbanks: result.wordbanks
+          .map((w, wi) => ({
+            ...w,
+            entries: w.entries.filter((_, ei) => !drop.has(`w${wi}-${ei}`)),
+          }))
+          .filter((w) => w.entries.length > 0),
+      };
+    } else {
+      const drop = new Set(consumed.map(([i]) => i));
+      next = { ...result, rules: result.rules.filter((_, i) => !drop.has(i)) };
+    }
+    setResult(next);
+    pick(next);
+  };
+
   const addRules = async () => {
     if (!result) return;
     setSaving("rules");
     try {
       const cur: CustomRulesData = await api.customRules();
-      const picked: AiBuildRule[] = result.rules.filter((_, i) => ruleSel[`r${i}`]);
+      const AI_GROUP = "AI 生成规则";
+      const groups: CustomRulesData["groups"] = (cur.groups || []).map((g) => ({
+        ...g,
+        rules: [...(g.rules || [])],
+      }));
+      const known = new Set<string>();
+      groups.forEach((g) =>
+        (g.rules || []).forEach((r) => known.add(`${r.match_mode}|${(r.pattern || "").trim()}`)),
+      );
+
+      const picked = result.rules
+        .map((r, i) => ({ r, i }))
+        .filter(({ i }) => ruleSel[`r${i}`]);
       if (!picked.length) {
         toast("未勾选任何规则", "warn");
         return;
       }
-      const next = {
-        groups: [
-          ...(cur.groups || []),
-          {
-            id: genId("g"),
-            name: "AI 生成规则",
-            category: "expression",
-            scope: "all",
-            enabled: true,
-            rules: picked.map((r) => ({
-              id: genId("r"),
-              name: r.name,
-              enabled: true,
-              match_mode: r.match_mode as "keyword" | "regex",
-              pattern: r.pattern,
-              severity: r.severity as "low" | "medium" | "high",
-              tag: "",
-              suggestion: r.suggestion,
-            })),
-          },
-        ],
-      };
-      const res = await api.saveCustomRules(next);
+      let target = groups.find((g) => g.name === AI_GROUP);
+      if (!target) {
+        target = {
+          id: genId("g"),
+          name: AI_GROUP,
+          category: "expression",
+          scope: "all",
+          enabled: true,
+          rules: [],
+        };
+        groups.push(target);
+      }
+      const consumed: Array<[number, number]> = [];
+      let added = 0;
+      let dup = 0;
+      for (const { r, i } of picked) {
+        consumed.push([i, 0]);
+        const key = `${r.match_mode}|${(r.pattern || "").trim()}`;
+        if (!r.pattern || known.has(key)) {
+          dup += 1;
+          continue;
+        }
+        known.add(key);
+        target.rules.push({
+          id: genId("r"),
+          name: r.name,
+          enabled: true,
+          match_mode: r.match_mode as "keyword" | "regex",
+          pattern: r.pattern,
+          severity: r.severity as "low" | "medium" | "high",
+          tag: r.source_label || "",
+          suggestion: r.suggestion,
+          source: r.source,
+          source_label: r.source_label,
+        });
+        added += 1;
+      }
+      const res = await api.saveCustomRules({ groups });
       const flt = res.filtered_rules ?? 0;
-      toast(flt > 0
-        ? `已加入规则 ${picked.length - flt} 条，后端过滤无效规则 ${flt} 条（见日志）`
-        : `已加入规则：${picked.length} 条`);
+      const parts = [`已加入规则 ${Math.max(added - flt, 0)} 条`];
+      if (flt > 0) parts.push(`后端过滤无效 ${flt} 条`);
+      if (dup > 0) parts.push(`库内已存在跳过 ${dup} 条`);
+      toast(parts.join("，"));
+      dropConsumed(consumed, false);
     } catch (e) {
       toast((e as Error).message, "err");
     } finally {
@@ -287,7 +391,7 @@ export default function AiCreateTab() {
       const r = await api.aiMemoryAddSample({
         diffs: pairs,
         source_doc: st.files.map((f) => f.name).join("、") || "—",
-        revised_doc: st.revised || "—",
+        revised_doc: st.revised?.name || "—",
       });
       if (!r.ok) {
         toast(r.message || "加入失败", "err");
@@ -314,21 +418,29 @@ export default function AiCreateTab() {
         return;
       }
       toast("学习任务已启动，本地推理过程实时展示中…");
+      let since = 0;
+      let merged: LearnLogEntry[] = [];
+      let delay = 450;
       while (mountedRef.current) {
         let l: LearnLogsResp;
         try {
-          l = await api.aiMemoryLearnLogs(s.id);
+          l = await api.aiMemoryLearnLogs(s.id, since);
         } catch {
           break;
         }
-        setLearnLogs(l);
+        // 增量拼接：仅把本次新增的日志追加到已有数组，避免整表重建
+        if (l.logs.length) merged = merged.concat(l.logs);
+        since = l.offset ?? merged.length;
+        setLearnLogs({ ok: l.ok, logs: merged, state: l.state });
         if (l.state.done || !l.state.running) {
-          if (l.state.ok) {
+          if (l.state.cancelled) {
+            toast(l.state.message || "已中止学习", "warn");
+          } else if (l.state.ok) {
             const st: { entries?: number; rules?: number; filtered?: number; skipped?: number } =
               l.state.stats || {};
             toast(
-              st.filtered
-                ? `学习完成：产出词条 ${st.entries ?? 0} 条、规则 ${st.rules ?? 0} 条，后端过滤无效 ${st.filtered} 条`
+              st.filtered || st.skipped
+                ? `学习完成：产出词条 ${st.entries ?? 0} 条、规则 ${st.rules ?? 0} 条，过滤 ${st.filtered ?? 0} 条、重复跳过 ${st.skipped ?? 0} 条`
                 : `学习完成：产出词条 ${st.entries ?? 0} 条、规则 ${st.rules ?? 0} 条`,
             );
           } else {
@@ -337,12 +449,23 @@ export default function AiCreateTab() {
           loadMem();
           break;
         }
-        await new Promise((res) => setTimeout(res, 800));
+        await new Promise((res) => setTimeout(res, delay));
+        if (delay < 1500) delay += 100;
       }
     } catch (e) {
       toast((e as Error).message, "err");
     } finally {
       setLearning(null);
+    }
+  };
+
+  const cancelLearn = async () => {
+    if (!learning) return;
+    try {
+      const r = await api.aiMemoryLearnCancel(learning);
+      toast(r.message || "正在停止本地推理…", r.ok ? "warn" : "err");
+    } catch (e) {
+      toast((e as Error).message, "err");
     }
   };
 
@@ -377,6 +500,18 @@ export default function AiCreateTab() {
     : 0;
   const ruleCount = result ? result.rules.filter((_, i) => ruleSel[`r${i}`]).length : 0;
 
+  /* 结果来源溯源标记：入库时随规则/词条一并写入，便于在列表中辨识 AI 产物 */
+  const resultSource = (() => {
+    if (!result) return "";
+    const hit = result.rules.find((r) => r.source_label);
+    if (hit?.source_label) return hit.source_label;
+    for (const w of result.wordbanks) {
+      const e = (w.entries || []).find((x) => x.source_label);
+      if (e?.source_label) return e.source_label;
+    }
+    return "";
+  })();
+
   const sampleStatus: Record<string, { tone: "gray" | "ok" | "warn" | "danger"; label: string }> = {
     pending: { tone: "gray", label: "待学习" },
     learning: { tone: "warn", label: "学习中" },
@@ -406,6 +541,9 @@ export default function AiCreateTab() {
             <HoloButton variant="primary" disabled={busy !== null} onClick={() => runBuild("dialogue")}>
               {busy === "dialogue" ? "AI 生成中…（本地推理较慢，可能需要 5-20 分钟）" : "生成规则与词库"}
             </HoloButton>
+            {busy === "dialogue" && curBid && (
+              <HoloButton variant="danger" onClick={cancelBuild}>中止生成</HoloButton>
+            )}
             <span className="text-[11px] text-white/35">来源标记：AI对话创建</span>
           </div>
         </HoloCard>
@@ -444,6 +582,10 @@ export default function AiCreateTab() {
                 e.target.value = "";
               }}
             />
+            {busy === "doc" && <span className="text-xs text-white/40">AI 阅读「{docName}」中…</span>}
+            {(busy === "text" || busy === "doc") && curBid && (
+              <HoloButton variant="danger" onClick={cancelBuild}>中止生成</HoloButton>
+            )}
             {docName && <span className="text-xs text-white/40">{docName}</span>}
             <span className="text-[11px] text-white/35">来源标记：AI文本创建</span>
           </div>
@@ -452,11 +594,13 @@ export default function AiCreateTab() {
 
       {buildLogs && <BuildProcessPanel logs={buildLogs} />}
 
-      {result && (
+      {/* 生成结果预览仅在「对话式 / 文本式」子标签展示，切到自学习页不再残留上一轮结果 */}
+      {(sub === "dialogue" || sub === "text") && result && (
         <HoloCard className="p-4" glow="sm">
           <div className="flex flex-wrap items-center gap-2.5">
             <span className="text-sm font-semibold text-white">生成结果预览</span>
             <span className="text-xs text-white/40">勾选要加入的条目，确认后写入自定义词库 / 自定义规则</span>
+            {resultSource && <HoloBadge tone="accent">来源：{resultSource}</HoloBadge>}
             <div className="ml-auto flex flex-wrap items-center gap-2">
               <HoloButton size="sm" variant="primary" disabled={saving !== null} onClick={addWordbanks}>
                 {saving === "wb" ? "加入中…" : `加入词库（${selWbCount}）`}
@@ -470,7 +614,7 @@ export default function AiCreateTab() {
           {result.wordbanks.length > 0 && (
             <div className="mt-3 space-y-3">
               {result.wordbanks.map((w, wi) => (
-                <div key={`${wi}-${w.name}`} className="overflow-hidden rounded-2xl border border-white/10">
+                <div key={`${wi}-${w.name}`} className="overflow-x-auto rounded-2xl border border-white/10">
                   <div className="border-b border-white/10 bg-white/[0.04] px-3 py-2 text-[13px] font-semibold text-white/85">
                     📚 {w.name}
                     <span className="ml-2 text-[11px] font-normal text-white/40">{w.entries.length} 条</span>
@@ -503,7 +647,7 @@ export default function AiCreateTab() {
           )}
 
           {result.rules.length > 0 && (
-            <div className="mt-3 overflow-hidden rounded-2xl border border-white/10">
+            <div className="mt-3 overflow-x-auto rounded-2xl border border-white/10">
               <div className="border-b border-white/10 bg-white/[0.04] px-3 py-2 text-[13px] font-semibold text-white/85">
                 🧩 规则
                 <span className="ml-2 text-[11px] font-normal text-white/40">{result.rules.length} 条</span>
@@ -544,7 +688,11 @@ export default function AiCreateTab() {
           )}
 
           {result.wordbanks.length === 0 && result.rules.length === 0 && (
-            <p className="mt-3 text-xs text-white/40">AI 认为当前输入没有适合落地的规则或词库，可换个说法重试。</p>
+            <p className="mt-3 text-xs text-white/40">
+              {filterStat
+                ? "本轮产出的规则与词条全部未通过入库前置校验（多为与库内重复或匹配式与建议相同），可换个说法重试。"
+                : "AI 认为当前输入没有适合落地的规则或词库，可换个说法重试；已入库的条目已从下方列表移除。"}
+            </p>
           )}
         </HoloCard>
       )}
@@ -564,6 +712,7 @@ export default function AiCreateTab() {
           onComputeDiffs={computeDiffs}
           onAddSample={addSample}
           onLearn={learn}
+          onCancelLearn={cancelLearn}
           onClear={clearAll}
           onExport={exportLearned}
           onReload={loadMem}
@@ -618,6 +767,7 @@ interface LearningProps {
   onComputeDiffs: () => void;
   onAddSample: () => void;
   onLearn: (s: AiMemorySample) => void;
+  onCancelLearn: () => void;
   onClear: () => void;
   onExport: (format: "csv" | "txt", kind: "wordbanks" | "rules") => void;
   onReload: () => void;
@@ -716,7 +866,12 @@ function LearningSection(p: LearningProps) {
                   e.target.value = "";
                 }}
               />
-              {src.revised && <span className="text-xs text-white/40">已配对修订文档：{src.revised}</span>}
+              {src.revised && (
+                <span className="text-xs text-white/40">
+                  已配对修订文档：{src.revised.name}
+                  {src.revised.time ? `（${src.revised.time}）` : ""}
+                </span>
+              )}
               <HoloButton variant="ghost" disabled={!mem.enabled || !src.revised} onClick={p.onComputeDiffs}>
                 比对差异
               </HoloButton>
@@ -838,7 +993,7 @@ function LearningSection(p: LearningProps) {
 
       {/* 本地推理过程（流式实时展示） */}
       {p.learnLogs && (p.learnLogs.logs.length > 0 || p.learning !== null) && (
-        <LearnProcessPanel learnLogs={p.learnLogs} />
+        <LearnProcessPanel learnLogs={p.learnLogs} onCancel={p.onCancelLearn} />
       )}
 
       {/* 学习产出（词库条目 + 校验规则，可导出备份） */}
@@ -925,14 +1080,50 @@ function LearningSection(p: LearningProps) {
   );
 }
 
-/* ---------- 本地 AI 推理过程面板：阶段流 + 思考链折叠 + 流式输出 ---------- */
-const STAGE_SEQ: { key: string; label: string; icon: string }[] = [
-  { key: "start", label: "加载样本", icon: "📂" },
-  { key: "prompt", label: "构建提示", icon: "📨" },
-  { key: "infer", label: "本地推理", icon: "🧠" },
-  { key: "parse", label: "解析产出", icon: "📋" },
-  { key: "validate", label: "入库校验", icon: "🛡️" },
-  { key: "done", label: "完成", icon: "✅" },
+/* ---------- 本地 AI 自学习阶段定义（含每阶段说明，用于进度区文案） ---------- */
+/* 日志增量累积器：轮询只返回新增日志，这里按需增量拼接到已有文本，
+   避免每轮对全量历史做 filter + map + join（原实现随推理时长呈 O(n²)）。
+   key 用于识别任务切换（新任务自动重置）。 */
+function useLogAccumulator(logs: LearnLogEntry[], key: string) {
+  const ref = useRef<{
+    n: number; key: string; thinking: string; output: string;
+    err?: string; recent: LearnLogEntry[];
+  } | null>(null);
+  return useMemo(() => {
+    if (!ref.current || ref.current.key !== key || logs.length < ref.current.n) {
+      ref.current = { n: 0, key, thinking: "", output: "", err: undefined, recent: [] };
+    }
+    const acc = ref.current;
+    for (let i = acc.n; i < logs.length; i++) {
+      const l = logs[i];
+      if (l.kind === "thinking") acc.thinking += l.text;
+      else if (l.kind === "token") acc.output += l.text;
+      else if (l.kind === "error" && acc.err === undefined) acc.err = l.text;
+      else if (l.kind === "stage") {
+        acc.recent.push(l);
+        if (acc.recent.length > 12) acc.recent.splice(0, acc.recent.length - 12);
+      }
+    }
+    acc.n = logs.length;
+    // 返回轻量快照：保持引用变化，让下游 useMemo / useEffect 能感知更新
+    return {
+      n: acc.n,
+      key: acc.key,
+      thinking: acc.thinking,
+      output: acc.output,
+      err: acc.err,
+      recent: acc.recent,
+    };
+  }, [logs, key]);
+}
+
+const LEARN_STAGES: { key: string; label: string; icon: string; desc: string }[] = [
+  { key: "start", label: "加载样本", icon: "📂", desc: "读取人工校对差异片段" },
+  { key: "prompt", label: "构建提示", icon: "📨", desc: "组装本地离线推理提示" },
+  { key: "infer", label: "本地推理", icon: "🧠", desc: "模型提炼「错误 → 标准表述」" },
+  { key: "parse", label: "解析产出", icon: "📋", desc: "JSON 转为词条与校验规则" },
+  { key: "validate", label: "入库校验", icon: "🛡️", desc: "过滤无效与库内重复" },
+  { key: "done", label: "完成", icon: "✅", desc: "并入自定义词库 / 自定义规则" },
 ];
 
 /* ---------- AI 生成推理过程面板（对话/文本/文档式，与自学习同构） ---------- */
@@ -950,8 +1141,17 @@ function BuildProcessPanel({ logs }: { logs: BuildLogsResp }) {
   const data = logs.logs;
   const st = logs.state;
 
+  const acc = useLogAccumulator(data, "build");
+  const thinking = acc.thinking;
+  const output = acc.output;
+  const errLog = acc.err;
+
   const stages = useMemo(() => {
-    const seen = new Set(data.filter((l) => l.kind === "stage").map((l) => l.text.match(/^\[(\w+)\]/)?.[1] ?? ""));
+    const seen = new Set(
+      acc.recent
+        .filter((l) => l.kind === "stage")
+        .map((l) => l.text.match(/^\[(\w+)\]/)?.[1] ?? ""),
+    );
     return BUILD_STAGES.map((s) => {
       let active = false;
       let done = false;
@@ -965,11 +1165,7 @@ function BuildProcessPanel({ logs }: { logs: BuildLogsResp }) {
       }
       return { ...s, done, active };
     });
-  }, [data, st]);
-
-  const thinking = useMemo(() => data.filter((l) => l.kind === "thinking").map((l) => l.text).join(""), [data]);
-  const output = useMemo(() => data.filter((l) => l.kind === "token").map((l) => l.text).join(""), [data]);
-  const errLog = useMemo(() => data.find((l) => l.kind === "error")?.text, [data]);
+  }, [acc, st]);
 
   useEffect(() => {
     const el = viewRef.current;
@@ -1024,7 +1220,7 @@ function BuildProcessPanel({ logs }: { logs: BuildLogsResp }) {
         )}
         {data.length > 0 && (
           <div className="mt-3 space-y-1">
-            {data.filter((l) => l.kind === "stage" || l.kind === "error").slice(-6).map((l, i) => (
+            {acc.recent.slice(-6).map((l, i) => (
               <div key={i} className="flex items-start gap-2 text-[11px]">
                 <span className="shrink-0 text-white/30">{l.ts}</span>
                 <span className={l.kind === "error" ? "text-[var(--tone-danger)]" : "text-white/60"}>{l.text}</span>
@@ -1037,58 +1233,136 @@ function BuildProcessPanel({ logs }: { logs: BuildLogsResp }) {
   );
 }
 
-/* ---------- 本地 AI 推理过程面板（自学习）：阶段流 + 思考链折叠 + 流式输出 ---------- */
-function LearnProcessPanel({ learnLogs }: { learnLogs: LearnLogsResp }) {
+/* ---------- 本地 AI 自学习过程面板：实时进度 + 阶段流 + 思考链 + 流式输出 ---------- */
+function fmtDuration(sec: number) {
+  const s = Math.max(0, Math.floor(sec || 0));
+  const m = Math.floor(s / 60);
+  return m > 0 ? `${m} 分 ${String(s % 60).padStart(2, "0")} 秒` : `${s} 秒`;
+}
+
+function LearnProcessPanel({
+  learnLogs,
+  onCancel,
+}: {
+  learnLogs: LearnLogsResp;
+  onCancel?: () => void;
+}) {
   const viewRef = useRef<HTMLDivElement>(null);
   const logs = learnLogs.logs;
   const st = learnLogs.state;
-  const stages = useMemo(() => {
-    const seen = new Set(logs.filter((l) => l.kind === "stage").map((l) => l.text.match(/^\[(\w+)\]/)?.[1] ?? ""));
-    return STAGE_SEQ.map((s) => {
-      let active = false;
-      let done = false;
-      if (s.key === "done") {
-        done = st.done;
-        active = false;
-      } else {
-        const hit = seen.has(s.key);
-        done = hit;
-        active = !done && (st.running || !st.done);
-      }
-      return { ...s, done, active };
-    });
-  }, [logs, st]);
 
-  const thinking = useMemo(() => logs.filter((l) => l.kind === "thinking").map((l) => l.text).join(""), [logs]);
-  const output = useMemo(() => logs.filter((l) => l.kind === "token").map((l) => l.text).join(""), [logs]);
-  const errLog = useMemo(() => logs.find((l) => l.kind === "error")?.text, [logs]);
+  /* 当前阶段：优先用后端下发的 state.stage，兼容从阶段日志文本回读 */
+  const curStage = useMemo(() => {
+    if (st.stage) return st.stage;
+    const seq = logs
+      .filter((l) => l.kind === "stage")
+      .map((l) => l.text.match(/^\[(\w+)\]/)?.[1] ?? "")
+      .filter(Boolean);
+    return seq.length ? seq[seq.length - 1] : "";
+  }, [st.stage, logs]);
+
+  const order = LEARN_STAGES.map((s) => s.key);
+  const curIdx = curStage ? order.indexOf(curStage) : -1;
+  const finished = !!st.done;
+  const aborted = finished && !!st.cancelled;
+  const failed = finished && !st.ok && !st.cancelled;
+
+  const stages = useMemo(
+    () =>
+      LEARN_STAGES.map((s, i) => {
+        if (s.key === "done") {
+          return { ...s, done: finished && !!st.ok, active: false, failed };
+        }
+        const passed = curIdx > i || (finished && !!st.ok);
+        return { ...s, done: passed, active: !passed && curStage === s.key, failed: false };
+      }),
+    [curIdx, curStage, finished, st.ok, failed],
+  );
+
+  const acc = useLogAccumulator(logs, "learn");
+  const thinking = acc.thinking;
+  const output = acc.output;
+  const errLog = acc.err;
+  const stageLogs = acc.recent;
 
   useEffect(() => {
     const el = viewRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [thinking, output, errLog]);
 
-  const runTone = st.done ? (st.ok ? "ok" : "danger") : "warn";
-  const runLabel = st.done ? (st.ok ? "推理完成" : "推理失败") : "推理中…（流式输出）";
+  const progress = Math.max(0, Math.min(100, Math.round(st.progress ?? 0)));
+  const curMeta = LEARN_STAGES.find((s) => s.key === curStage) || null;
+  const runTone = finished ? (aborted ? "warn" : st.ok ? "ok" : "danger") : "warn";
+  const runLabel = finished ? (aborted ? "已中止" : st.ok ? "学习完成" : "学习失败") : "学习中…（流式输出）";
+  const barGradient = failed
+    ? "linear-gradient(90deg,#ff6b7d,#ff0080)"
+    : aborted
+      ? "linear-gradient(90deg,#ffb020,#ffd166)"
+      : "linear-gradient(90deg,#ff0080,#7928ca,#00d4ff)";
+
+  const metrics: { label: string; value: string; hint?: string }[] = [
+    { label: "当前阶段", value: curMeta ? `${curMeta.icon} ${curMeta.label}` : finished ? "已结束" : "准备中", hint: curMeta?.desc },
+    { label: "已耗时", value: fmtDuration(st.elapsed_sec ?? 0) },
+    { label: "输出字数", value: (st.chars ?? 0).toLocaleString() },
+    { label: "输出速率", value: `${st.chars_per_sec ?? 0} 字/秒` },
+  ];
 
   return (
     <HoloCard className="overflow-hidden p-0" glow="sm">
       <div className="flex flex-wrap items-center gap-2 px-6 pt-5">
-        <SectionTitle className="!mb-0">本地模型推理过程</SectionTitle>
+        <SectionTitle className="!mb-0">本地模型学习过程</SectionTitle>
         <HoloBadge tone={runTone}>{runLabel}</HoloBadge>
-        {st.done && st.ok && (
-          <span className="text-[11px] text-[var(--tone-cyan)]">
-            产出词条 {st.stats?.entries ?? 0} 条 · 规则 {st.stats?.rules ?? 0} 条
-            {st.stats?.filtered ? ` · 过滤无效 ${st.stats.filtered} 条` : ""}
-            {st.stats?.skipped ? ` · 库内重复跳过 ${st.stats.skipped} 条` : ""}
-          </span>
+        {st.retry && !finished && <HoloBadge tone="warn">首次无产出 · 已自动重试</HoloBadge>}
+        {st.running && onCancel && (
+          <HoloButton size="sm" variant="danger" onClick={onCancel}>
+            中止学习
+          </HoloButton>
         )}
         <span className="ml-auto text-[11px] text-white/35">全程离线 · 数据不出本机</span>
       </div>
 
       <div className="p-6 pt-4">
+        {/* 实时进度条 */}
+        <div className="mb-1.5 flex items-end justify-between gap-3">
+          <span className="text-xs text-white/55">
+            {curMeta ? `${curMeta.icon} ${curMeta.label} · ${curMeta.desc}` : "等待本地模型启动…"}
+          </span>
+          <span className="font-mono text-lg font-bold leading-none text-white/90">
+            {progress}
+            <span className="text-xs text-white/40">%</span>
+          </span>
+        </div>
+        <div className="h-2.5 w-full overflow-hidden rounded-full border border-white/10 bg-[rgba(10,10,31,0.6)]">
+          <div
+            className="h-full rounded-full transition-[width] duration-700 ease-out"
+            style={{
+              width: `${Math.max(progress, st.running ? 4 : 0)}%`,
+              backgroundImage: barGradient,
+              backgroundSize: "300% 100%",
+              boxShadow: "0 0 12px rgba(0,212,255,0.35)",
+            }}
+          >
+            {st.running && (
+              <div className="h-full w-full animate-holoFlow rounded-full"
+                   style={{ backgroundImage: barGradient, backgroundSize: "300% 100%" }} />
+            )}
+          </div>
+        </div>
+
+        {/* 实时指标 */}
+        <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+          {metrics.map((m) => (
+            <div key={m.label} className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3">
+              <div className="text-[11px] text-white/45">{m.label}</div>
+              <div className="mt-1 truncate text-[15px] font-semibold text-white/90" title={m.value}>
+                {m.value}
+              </div>
+            </div>
+          ))}
+        </div>
+
         {/* 阶段流 */}
-        <div className="flex flex-wrap items-center gap-1.5">
+        <div className="mt-4 flex flex-wrap items-center gap-1.5">
           {stages.map((s, i) => (
             <div key={s.key} className="flex items-center gap-1.5">
               <span
@@ -1108,7 +1382,45 @@ function LearnProcessPanel({ learnLogs }: { learnLogs: LearnLogsResp }) {
           ))}
         </div>
 
-        {/* 推理输出 */}
+        {/* 完成 / 失败汇总 */}
+        {finished && (
+          <div
+            className={`mt-4 rounded-2xl border px-4 py-3 text-[13px] leading-relaxed ${
+              aborted
+                ? "border-amber-400/25 bg-amber-400/[0.06] text-amber-100/85"
+                : st.ok
+                  ? "border-[rgba(70,211,154,0.28)] bg-[rgba(70,211,154,0.07)] text-white/85"
+                  : "border-[rgba(255,107,125,0.3)] bg-[rgba(255,107,125,0.08)] text-[var(--tone-danger-soft)]"
+            }`}
+          >
+            {aborted ? (
+              <span>学习已中止：本次未产出词条 / 规则，样本已回到「待学习」，可随时重新触发。</span>
+            ) : st.ok ? (
+              <span className="space-y-1.5">
+                <span className="block">
+                  学习完成（耗时 {fmtDuration(st.elapsed_sec ?? 0)}）：产出词条{" "}
+                  <b className="text-white">{st.stats?.entries ?? 0}</b> 条、校验规则{" "}
+                  <b className="text-white">{st.stats?.rules ?? 0}</b> 条，已并入自定义词库 / 自定义规则。
+                  {(st.stats?.filtered ?? 0) > 0 && (
+                    <> 过滤无效 <b className="text-amber-300">{st.stats?.filtered}</b> 条。</>
+                  )}
+                  {(st.stats?.skipped ?? 0) > 0 && (
+                    <> 与库内重复跳过 <b className="text-amber-300">{st.stats?.skipped}</b> 条。</>
+                  )}
+                </span>
+                {st.stats?.standard_expression && (
+                  <span className="block text-[12px] text-white/60">
+                    AI 提炼的标准表述：{st.stats.standard_expression}
+                  </span>
+                )}
+              </span>
+            ) : (
+              <span>{st.message || "学习失败，请查看下方日志"}</span>
+            )}
+          </div>
+        )}
+
+        {/* 思考链 + 流式输出 */}
         {(thinking || output || errLog) && (
           <div className="mt-4 space-y-3">
             {thinking && (
@@ -1134,8 +1446,7 @@ function LearnProcessPanel({ learnLogs }: { learnLogs: LearnLogsResp }) {
         {/* 阶段日志摘要 */}
         {logs.length > 0 && (
           <div className="mt-3 space-y-1">
-            {logs
-              .filter((l) => l.kind === "stage" || l.kind === "error")
+            {stageLogs
               .slice(-6)
               .map((l, i) => (
                 <div key={i} className="flex items-start gap-2 text-[11px]">

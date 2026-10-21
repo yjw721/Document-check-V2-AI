@@ -5,7 +5,7 @@
    - 应用方式：<html data-scheme> + --accent-rgb 等 CSS 变量注入
    ============================================================ */
 
-export type ThemeScheme = "holographic" | "dark";
+export type ThemeScheme = "holographic" | "dark" | "ink";
 
 export const THEME_SCHEMES: Record<ThemeScheme, { name: string; desc: string; defaultAccent: string }> = {
   holographic: {
@@ -17,6 +17,11 @@ export const THEME_SCHEMES: Record<ThemeScheme, { name: string; desc: string; de
     name: "深色收敛 Dark",
     desc: "备选深色：收敛彩色光斑与渐变，突出强调色，更沉稳内敛",
     defaultAccent: "#7928ca",
+  },
+  ink: {
+    name: "水墨 Ink",
+    desc: "宣纸米白基底 + 墨色楷体 + 朱砂点缀，文房四宝气息",
+    defaultAccent: "#a52a2a",
   },
 };
 
@@ -31,10 +36,11 @@ export function hexToRgbStr(hex: string): string {
 }
 
 export function isThemeScheme(v: unknown): v is ThemeScheme {
-  return v === "holographic" || v === "dark";
+  return v === "holographic" || v === "dark" || v === "ink";
 }
 
-/* 应用主题到 <html>：data-scheme + accent 派生变量（实时预览 / 全局统一） */
+/* 应用主题到 <html>：data-scheme + accent 派生变量（实时预览 / 全局统一）
+   水墨（ink）方案下默认强调色为朱砂 #a52a2a，其余变量由 CSS 层接管 */
 export function applyTheme(scheme: unknown, accent: unknown): void {
   const s = isThemeScheme(scheme) ? scheme : "holographic";
   const def = THEME_SCHEMES[s].defaultAccent;

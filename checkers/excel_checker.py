@@ -46,9 +46,9 @@ FULL_WIDTH_SPACE = "\u3000"
 DEFAULT_SHEET_NAME_RE = re.compile(r"^(Sheet|sheet|工作表|表)\s*\d*$")
 # 可识别为数字的文本（含千分位、百分号、正负号、科学计数）
 NUMERIC_TEXT_RE = re.compile(r"^[+-]?(\d{1,3}(,\d{3})+|\d+)(\.\d+)?%?$")
-# 扫描上限，防止超大表卡死界面
-MAX_SCAN_ROWS = 3000
-MAX_SCAN_COLS = 200
+# 默认扫描上限，可被 rules.json excel.max_scan_rows / max_scan_cols 覆盖
+DEFAULT_MAX_SCAN_ROWS = 3000
+DEFAULT_MAX_SCAN_COLS = 200
 
 
 class ExcelChecker:
@@ -155,10 +155,13 @@ class ExcelChecker:
 
         self.issues = []
         # 文字规范 / 表述问题 / 自定义规则 / 自定义词库检测引擎（共享同一 issues 列表）
+        # 使用模块级缓存避免每文件重复读取配置
+        from checkers.custom_rules import get_custom_rules_cached
+        from checkers.wordbank import get_wordbanks_cached
         self.tn = TextNormChecker(self.cfg, self.issues, self._limit)
         self.fl = FluencyChecker(self.cfg, self.issues, self._limit, self._fluency_sensitivity)
-        self.cust = CustomRuleEngine(self.issues, self._limit)
-        self.wb = WordBankEngine(self.issues, self._limit)
+        self.cust = CustomRuleEngine(self.issues, self._limit, get_custom_rules_cached())
+        self.wb = WordBankEngine(self.issues, self._limit, get_wordbanks_cached())
         stat = {"sheets": 0, "cells": 0, "formulas": 0, "merged": 0}
 
         try:
@@ -229,8 +232,17 @@ class ExcelChecker:
     def _check_sheet(self, sheet_name: str, ws_val: Any, ws_raw: Any, stat: Dict[str, int],
                      si: int = 1) -> None:
         """对单个工作表执行全部检测项。"""
-        max_row = min(int(ws_val.max_row or 0), MAX_SCAN_ROWS)
-        max_col = min(int(ws_val.max_column or 0), MAX_SCAN_COLS)
+        # 扫描上限可配置（rules.json excel.max_scan_rows / max_scan_cols）
+        max_scan_rows = int(self.cfg.param(self.kind, "max_scan_rows", DEFAULT_MAX_SCAN_ROWS) or DEFAULT_MAX_SCAN_ROWS)
+        max_scan_cols = int(self.cfg.param(self.kind, "max_scan_cols", DEFAULT_MAX_SCAN_COLS) or DEFAULT_MAX_SCAN_COLS)
+        # 当真实数据超过常规扫描上限时，扩展窗口至包含尾部（避免空表误判 & 漏检），
+        # 同时设硬上限 max_scan_rows * 3 防 OOM；尾部仍超限时取尾部 max_scan_rows*3 行窗口。
+        _actual = int(ws_val.max_row or 0)
+        if _actual > max_scan_rows:
+            max_row = min(_actual, max_scan_rows * 3)
+        else:
+            max_row = _actual
+        max_col = min(int(ws_val.max_column or 0), max_scan_cols)
 
         # ---- 读取值矩阵（缓存计算值）与公式矩阵 ----
         values: List[List[Any]] = []

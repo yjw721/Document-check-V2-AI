@@ -4,7 +4,9 @@ Word 检测报告生成模块（纯本地 python-docx）
 =========================================
 报告结构：
     封面 → 检测基本信息 → 整体统计汇总 → 问题类型分布
-    → 分文件错误明细 → 异常（无法解析）文件清单 → 整改建议 → 落款
+    → 分文件错误明细（本地规则问题 + AI 智能核验问题合并呈现）
+    → 异常（无法解析）文件清单 → AI 智能核验专项汇总（含提示词记录）
+    → 整改建议（本地规则建议 + AI 提示合并汇总）→ 落款
 
 排版特性：
     A4 页面、页边距规范、中文字体（微软雅黑 + 宋体）
@@ -29,6 +31,17 @@ from docx.shared import Cm, Pt, RGBColor
 
 from checkers.base import STATUS_UNREADABLE, FileResult
 from config.config_manager import severity_label
+
+try:  # AI 核验模块可能未安装，降级为固定标题，保证报告仍可生成
+    from checkers.ai_checker import AI_RULE_TITLE as _AI_RULE_TITLE
+except Exception:  # noqa: BLE001
+    _AI_RULE_TITLE = "AI 智能核验"
+
+# AI 问题标记（Issue.source == "ai"），用于与本地规则问题区分汇总
+AI_SOURCE = "ai"
+AI_TITLE = _AI_RULE_TITLE
+# 文件级 AI 核验状态中文标签
+AI_STATUS_LABEL = {"ok": "完成", "skip": "跳过", "fail": "失败", "partial": "部分完成"}
 
 # ---------------------------------------------------------------------------
 # 样式常量
@@ -209,7 +222,8 @@ class ReportBuilder:
                  rule_summary: Optional[Dict[str, Any]] = None,
                  operator: str = "", org: str = "",
                  include_cover: bool = True,
-                 detail_columns: Optional[List[str]] = None) -> None:
+                 detail_columns: Optional[List[str]] = None,
+                 ai_review: Optional[Dict[str, Any]] = None) -> None:
         self.results = results
         self.summary = summary
         self.rule_summary = rule_summary or {}
@@ -217,7 +231,61 @@ class ReportBuilder:
         self.org = org or "—"
         self.include_cover = include_cover
         self.detail_columns = detail_columns or ["index", "location", "type", "severity", "detail", "suggestion"]
+        # AI 核验配置与提示词记录（由 app.py 传入，用于报告溯源与提示词归档）
+        self.ai_review = ai_review or {}
         self.now = datetime.now()
+
+    # ------------------------------------------------------------------
+    # AI 问题相关的公共辅助（AI 问题与本地规则问题统一口径：均排除已忽略项）
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _is_ai(issue: Any) -> bool:
+        return str(getattr(issue, "source", "") or "") == AI_SOURCE
+
+    @staticmethod
+    def _ai_category(issue: Any) -> str:
+        return (str(getattr(issue, "tag", "") or "").strip()) or "其他"
+
+    def _ai_pairs(self) -> List[tuple]:
+        """返回 [(FileResult, Issue), ...]：全部未忽略的 AI 核验问题。"""
+        out: List[tuple] = []
+        for res in self.results:
+            for issue in res.issues:
+                if issue.state == "ignored":
+                    continue
+                if self._is_ai(issue):
+                    out.append((res, issue))
+        return out
+
+    def _expanded_by_rule(self) -> Dict[str, int]:
+        """问题类型分布：本地规则问题按规则名、AI 问题按类别展开，合并统计。"""
+        out: Dict[str, int] = {}
+        for res in self.results:
+            for issue in res.issues:
+                if issue.state == "ignored":
+                    continue
+                if self._is_ai(issue):
+                    key = f"{AI_TITLE} · {self._ai_category(issue)}"
+                else:
+                    key = issue.rule_title or "未命名规则"
+                out[key] = out.get(key, 0) + 1
+        return dict(sorted(out.items(), key=lambda kv: (-kv[1], kv[0])))
+
+    def _source_stats(self) -> Dict[str, Dict[str, int]]:
+        """按来源（本地规则 / AI 智能核验）统计问题数与级别分布。"""
+        stats = {
+            "本地规则校验": {"total": 0, "high": 0, "medium": 0, "low": 0},
+            f"{AI_TITLE}": {"total": 0, "high": 0, "medium": 0, "low": 0},
+        }
+        for res in self.results:
+            for issue in res.issues:
+                if issue.state == "ignored":
+                    continue
+                bucket = stats[AI_TITLE] if self._is_ai(issue) else stats["本地规则校验"]
+                bucket["total"] += 1
+                if issue.severity in bucket:
+                    bucket[issue.severity] += 1
+        return stats
 
     # ------------------------------------------------------------------
     def build(self, out_path: str) -> str:
@@ -231,6 +299,7 @@ class ReportBuilder:
         self._rule_distribution(doc)
         self._file_details(doc)
         self._unreadable_list(doc)
+        self._ai_review_section(doc)
         self._suggestions(doc)
         self._footer_note(doc)
 
@@ -324,6 +393,17 @@ class ReportBuilder:
         if other_cnt:
             scope_txt += f"、不支持格式 {other_cnt} 个"
 
+        # 检测方式：AI 参与时如实标注（本地模式仍为零联网）
+        ai_on = bool(self.ai_review.get("enabled")) or bool(self._ai_pairs())
+        if ai_on:
+            mode_txt = str(self.ai_review.get("mode") or "AI 智能核验")
+            model_txt = str(self.ai_review.get("model") or "—")
+            net_txt = "零联网" if self.ai_review.get("mode_key") == "local" else "仅访问用户自行配置的接口"
+            check_way = (f"本地规则校验 + AI 智能核验（{mode_txt}；"
+                         f"模型 {model_txt}；{net_txt}）")
+        else:
+            check_way = "本地规则校验（未启用 AI 智能核验）"
+
         _kv_table(doc, [
             ("检测工具", "文档低级错误检查工具（本地离线版 v1.0）"),
             ("运行模式", "纯本地离线运行，零联网、零数据上传、零云端接口"),
@@ -331,7 +411,7 @@ class ReportBuilder:
             ("检测范围", scope_txt),
             ("启用规则", f"Word 规则 {rules_word}；Excel 规则 {rules_excel}；"
                         f"文字规范规则 {rules_textnorm}；PDF 规则 {rules_pdf}"),
-            ("检测方式", "本地规则校验（不调用任何 AI 云端服务、不解析上传）"),
+            ("检测方式", check_way),
             ("原文档处理", "只读检测，不对原始文档做任何写入或修改"),
             ("检测人", self.operator),
             ("所属单位", self.org),
@@ -388,6 +468,34 @@ class ReportBuilder:
             _set_cell_text(cells2[idx], val, size=10, align=WD_ALIGN_PARAGRAPH.CENTER, color=color)
         _set_col_widths(table2, [3.0, 3.0, 3.0, 3.0, 3.0])
 
+        # 2.3 问题来源分布：本地规则问题与 AI 智能核验问题并列汇总
+        _para(doc, "", space_after=6)
+        _h2(doc, "2.3 问题来源分布")
+        src = self._source_stats()
+        src_total = sum(v["total"] for v in src.values()) or 1
+        table3 = doc.add_table(rows=1, cols=6)
+        table3.style = "Table Grid"
+        headers3 = ["问题来源", "问题数", "严重", "一般", "轻微", "占比"]
+        for idx, head in enumerate(headers3):
+            _set_cell_text(table3.rows[0].cells[idx], head, size=10, bold=True,
+                           align=WD_ALIGN_PARAGRAPH.CENTER, font=FONT_TITLE)
+            _shade_cell(table3.rows[0].cells[idx], SHADE_HEADER)
+        _set_repeat_header(table3.rows[0])
+        for name, v in src.items():
+            cells3 = table3.add_row().cells
+            _set_cell_text(cells3[0], name, size=9.5)
+            _set_cell_text(cells3[1], str(v["total"]), size=9.5, align=WD_ALIGN_PARAGRAPH.CENTER)
+            _set_cell_text(cells3[2], str(v["high"]), size=9.5, align=WD_ALIGN_PARAGRAPH.CENTER,
+                           color=COLOR_HIGH if v["high"] else None)
+            _set_cell_text(cells3[3], str(v["medium"]), size=9.5, align=WD_ALIGN_PARAGRAPH.CENTER)
+            _set_cell_text(cells3[4], str(v["low"]), size=9.5, align=WD_ALIGN_PARAGRAPH.CENTER)
+            _set_cell_text(cells3[5], f"{v['total'] / src_total * 100:.1f}%", size=9.5,
+                           align=WD_ALIGN_PARAGRAPH.CENTER)
+        _set_col_widths(table3, [4.2, 2.0, 2.0, 2.0, 2.0, 2.4])
+        _para(doc, "注：「本地规则校验」为内置规则 / 自定义规则 / 词库命中；"
+                   f"「{AI_TITLE}」为 AI 语义复核命中。二者已合并计入上方问题总数。",
+              size=8.5, color=COLOR_MUTED, space_before=3, space_after=0)
+
         _para(doc, "", space_after=6)
         concl = (f"本次共检测 {total} 个文件，其中 {ok} 个未发现低级错误，{bad} 个存在待整改问题，"
                  f"{err} 个无法解析；累计发现问题 {issues} 处"
@@ -397,9 +505,10 @@ class ReportBuilder:
 
     # ------------------------------------------------------------------
     def _rule_distribution(self, doc: Any) -> None:
-        """三、问题类型分布。"""
+        """三、问题类型分布（本地规则问题与 AI 核验问题合并统计）。"""
         _h1(doc, "三、问题类型分布")
-        by_rule: Dict[str, int] = dict(self.summary.get("by_rule", {}) or {})
+        # AI 问题按类别展开（如「AI 智能核验 · 数据错误」），与本地规则问题并列
+        by_rule: Dict[str, int] = self._expanded_by_rule()
         if not by_rule:
             _para(doc, "本次检测未发现任何问题，无问题类型分布数据。", size=10.5,
                   line_spacing=1.5, first_line_indent=21)
@@ -449,16 +558,30 @@ class ReportBuilder:
                   f"（严重 {sev['high']} / 一般 {sev['medium']} / 轻微 {sev['low']}）",
                   size=9.5, color=COLOR_MUTED, space_after=4)
             _para(doc, f"文件路径：{res.file_path}", size=8.5, color=COLOR_MUTED, space_after=6)
+            if res.ai_status:
+                _para(doc,
+                      f"AI 智能核验：{AI_STATUS_LABEL.get(res.ai_status, res.ai_status)}"
+                      f"　|　{res.ai_note}",
+                      size=8.5, color=COLOR_MUTED, space_after=6)
 
-            cols = self.detail_columns or ["index", "location", "type", "severity", "detail", "suggestion"]
+            shown = [i for i in res.issues if i.state != "ignored"]
+            has_ai = any(self._is_ai(i) for i in shown)
+            cols = list(self.detail_columns or ["index", "location", "type", "severity", "detail", "suggestion"])
+            # 该文件含 AI 问题时自动补一列「来源」，与本地规则问题在同一张明细表中区分
+            if has_ai and "source" not in cols:
+                cols.insert(cols.index("type") + 1 if "type" in cols else len(cols), "source")
             col_meta = {
                 "index": "序号", "location": "位置", "type": "问题类型",
                 "severity": "级别", "detail": "问题说明 / 原文", "suggestion": "整改建议",
+                "source": "来源",
             }
             col_widths = {
                 "index": 1.1, "location": 2.4, "type": 2.4, "severity": 1.1,
-                "detail": 4.5, "suggestion": 3.5,
+                "detail": 4.5, "suggestion": 3.5, "source": 1.8,
             }
+            if has_ai:   # 增加来源列后压缩说明列，保持总宽不超出版心
+                col_widths["detail"] = 3.3
+                col_widths["suggestion"] = 2.9
             headers = [col_meta.get(c, c) for c in cols]
             table = doc.add_table(rows=1, cols=len(cols))
             table.style = "Table Grid"
@@ -468,7 +591,6 @@ class ReportBuilder:
                 _shade_cell(table.rows[0].cells[idx], SHADE_HEADER)
             _set_repeat_header(table.rows[0])
 
-            shown = [i for i in res.issues if i.state != "ignored"]
             for i_idx, issue in enumerate(shown, start=1):
                 cells = table.add_row().cells
                 for c_idx, col in enumerate(cols):
@@ -478,18 +600,28 @@ class ReportBuilder:
                     elif col == "location":
                         _set_cell_text(cells[c_idx], issue.location, size=8.5)
                     elif col == "type":
-                        _set_cell_text(cells[c_idx], issue.rule_title, size=8.5)
+                        # AI 问题在「问题类型」列同时标注类别，便于与本地规则问题对照整改
+                        title = issue.rule_title
+                        if self._is_ai(issue):
+                            title = f"{title}·{self._ai_category(issue)}"
+                        _set_cell_text(cells[c_idx], title, size=8.5)
+                    elif col == "source":
+                        _set_cell_text(cells[c_idx],
+                                       AI_TITLE if self._is_ai(issue) else "本地规则",
+                                       size=8.5, align=WD_ALIGN_PARAGRAPH.CENTER,
+                                       color=COLOR_LOW if self._is_ai(issue) else None)
                     elif col == "severity":
                         _set_cell_text(cells[c_idx], severity_label(issue.severity), size=8.5,
                                        align=WD_ALIGN_PARAGRAPH.CENTER,
                                        color=SEVERITY_COLOR.get(issue.severity, COLOR_TEXT))
                     elif col == "detail":
-                        detail_text = issue.detail
+                        # 防御：detail/snippet 可能为 None，统一为 str 避免整份报告中断
+                        detail_text = str(issue.detail or "")
                         if issue.snippet:
-                            detail_text += f"\n原文：{issue.snippet}"
+                            detail_text += f"\n原文：{str(issue.snippet)}"
                         _set_cell_text(cells[c_idx], detail_text, size=8.5)
                     elif col == "suggestion":
-                        _set_cell_text(cells[c_idx], issue.suggestion or "—", size=8.5)
+                        _set_cell_text(cells[c_idx], str(issue.suggestion or "—"), size=8.5)
                 if issue.state == "checked":
                     for c in cells:
                         _shade_cell(c, "EAF3EA")   # 已核查行浅绿底
@@ -530,26 +662,198 @@ class ReportBuilder:
         _set_col_widths(table, [1.3, 5.2, 1.8, 2.0, 4.7])
 
     # ------------------------------------------------------------------
+    def _ai_review_section(self, doc: Any) -> None:
+        """六、AI 智能核验专项汇总（配置与提示词记录 + 问题清单 + 提示汇总）。"""
+        doc.add_paragraph().add_run().add_break(WD_BREAK.PAGE)
+        _h1(doc, f"六、{AI_TITLE}专项汇总")
+
+        ai_pairs = self._ai_pairs()
+        ai_rec = self.ai_review or {}
+
+        # 6.1 核验配置与提示词记录
+        _h2(doc, "6.1 核验配置与提示词记录")
+        if not ai_rec and not ai_pairs:
+            _para(doc, "本次检测未启用 AI 智能核验，无 AI 核验配置与提示词记录。",
+                  size=10.5, line_spacing=1.5, first_line_indent=21)
+            _para(doc, "如需启用，请在「AI 配置」中设置本地模型（Ollama）或联网接口后重新检测。",
+                  size=10, color=COLOR_MUTED, line_spacing=1.5, first_line_indent=21)
+            return
+
+        conf_rows = [
+            ("核验模式", str(ai_rec.get("mode") or "—")),
+            ("模型", str(ai_rec.get("model") or "—")),
+            ("接口地址", str(ai_rec.get("base_url") or "—")),
+            ("核验范围", str(ai_rec.get("verify_scope") or "—")),
+            ("分段参数", f"每段上限 {ai_rec.get('max_chars', '—')} 字；"
+                        f"单文件最多 {ai_rec.get('max_requests', '—')} 次调用"),
+            ("覆盖策略", str(ai_rec.get("coverage") or "—")),
+            ("深度复核", "开启（每段追加一轮补漏复核）" if ai_rec.get("deep_review")
+                        else "关闭"),
+            ("严格取证", "开启（引用需逐字命中，置信度低于 "
+                        f"{ai_rec.get('min_confidence', 0.6)} 的问题丢弃）"
+                        if ai_rec.get("strict_grounding") else "关闭"),
+            ("参考资料", "已携带" if ai_rec.get("ref_enabled") else "未携带"),
+            ("知识库 RAG", "已启用" if ai_rec.get("kb_enabled") else "未启用"),
+            ("记录时间", str(ai_rec.get("recorded_at") or self.now.strftime("%Y-%m-%d %H:%M:%S"))),
+        ]
+        _active_skills = ai_rec.get("active_skills") or []
+        if _active_skills:
+            _names = "、".join(
+                (s.get("name", s) if isinstance(s, dict) else str(s)) for s in _active_skills
+            )
+            _builtin_cnt = sum(1 for s in _active_skills if isinstance(s, dict) and s.get("builtin"))
+            _conf_suffix = f"（内置 {_builtin_cnt} / 自定义 {len(_active_skills) - _builtin_cnt}）"
+            conf_rows.append(("启用专项技能", _names + _conf_suffix))
+        _kv_table(doc, conf_rows)
+
+        sys_prompt = str(ai_rec.get("system_prompt") or "").strip()
+        if sys_prompt:
+            _para(doc, "", space_after=4)
+            _para(doc, "【AI 核验主提示词】", size=10, bold=True, color=COLOR_PRIMARY, space_after=3)
+            _para(doc, sys_prompt, size=8.5, line_spacing=1.25, color=COLOR_TEXT, space_after=6)
+        _skill_prompts = str(ai_rec.get("skill_prompts") or "").strip()
+        if _skill_prompts:
+            _para(doc, "【启用的专项技能提示词】", size=10, bold=True, color=COLOR_PRIMARY, space_after=3)
+            _para(doc, _skill_prompts, size=8.5, line_spacing=1.25, color=COLOR_TEXT, space_after=6)
+        rev_prompt = str(ai_rec.get("review_prompt") or "").strip()
+        if rev_prompt and ai_rec.get("deep_review"):
+            _para(doc, "【AI 深度复核提示词】", size=10, bold=True, color=COLOR_PRIMARY, space_after=3)
+            _para(doc, rev_prompt, size=8.5, line_spacing=1.25, color=COLOR_TEXT, space_after=6)
+
+        # 6.2 按类别汇总
+        _para(doc, "", space_after=4)
+        _h2(doc, "6.2 AI 发现问题分类统计")
+        if not ai_pairs:
+            _para(doc, "本次 AI 智能核验未发现确凿问题。", size=10.5,
+                  line_spacing=1.5, first_line_indent=21)
+        else:
+            cat_stat: Dict[str, Dict[str, int]] = {}
+            for _res, issue in ai_pairs:
+                cat = self._ai_category(issue)
+                b = cat_stat.setdefault(cat, {"total": 0, "high": 0, "medium": 0, "low": 0})
+                b["total"] += 1
+                if issue.severity in b:
+                    b[issue.severity] += 1
+            table = doc.add_table(rows=1, cols=5)
+            table.style = "Table Grid"
+            headers = ["序号", "AI 问题类别", "数量", "严重 / 一般 / 轻微", "占比"]
+            for idx, head in enumerate(headers):
+                _set_cell_text(table.rows[0].cells[idx], head, size=9.5, bold=True,
+                               align=WD_ALIGN_PARAGRAPH.CENTER, font=FONT_TITLE)
+                _shade_cell(table.rows[0].cells[idx], SHADE_HEADER)
+            _set_repeat_header(table.rows[0])
+            total_ai = len(ai_pairs) or 1
+            for i, (cat, b) in enumerate(sorted(cat_stat.items(), key=lambda kv: -kv[1]["total"]), 1):
+                cells = table.add_row().cells
+                _set_cell_text(cells[0], str(i), size=9, align=WD_ALIGN_PARAGRAPH.CENTER)
+                _set_cell_text(cells[1], cat, size=9)
+                _set_cell_text(cells[2], str(b["total"]), size=9, align=WD_ALIGN_PARAGRAPH.CENTER)
+                _set_cell_text(cells[3], f"{b['high']} / {b['medium']} / {b['low']}", size=9,
+                               align=WD_ALIGN_PARAGRAPH.CENTER)
+                _set_cell_text(cells[4], f"{b['total'] / total_ai * 100:.1f}%", size=9,
+                               align=WD_ALIGN_PARAGRAPH.CENTER)
+                if i % 2 == 0:
+                    for c in cells:
+                        _shade_cell(c, SHADE_SUBTLE)
+            _set_col_widths(table, [1.3, 4.2, 2.0, 3.6, 2.0])
+
+        # 6.3 逐条清单（与本地规则问题同源合并展示的明细索引）
+        if ai_pairs:
+            _para(doc, "", space_after=4)
+            _h2(doc, "6.3 AI 问题逐条清单")
+            table2 = doc.add_table(rows=1, cols=6)
+            table2.style = "Table Grid"
+            headers2 = ["序号", "文件", "位置", "类别 / 级别", "问题说明", "AI 提示与建议"]
+            for idx, head in enumerate(headers2):
+                _set_cell_text(table2.rows[0].cells[idx], head, size=9, bold=True,
+                               align=WD_ALIGN_PARAGRAPH.CENTER, font=FONT_TITLE)
+                _shade_cell(table2.rows[0].cells[idx], SHADE_HEADER)
+            _set_repeat_header(table2.rows[0])
+            for i, (res, issue) in enumerate(ai_pairs, 1):
+                cells = table2.add_row().cells
+                _set_cell_text(cells[0], str(i), size=8.5, align=WD_ALIGN_PARAGRAPH.CENTER)
+                _set_cell_text(cells[1], res.file_name, size=8.5)
+                _set_cell_text(cells[2], str(issue.location or "—"), size=8.5)
+                _set_cell_text(cells[3], f"{self._ai_category(issue)} / "
+                                         f"{severity_label(issue.severity)}", size=8.5,
+                               align=WD_ALIGN_PARAGRAPH.CENTER,
+                               color=SEVERITY_COLOR.get(issue.severity, COLOR_TEXT))
+                detail_text = str(issue.detail or "")
+                if issue.snippet:
+                    detail_text += f"\n原文：{str(issue.snippet)}"
+                _set_cell_text(cells[4], detail_text, size=8.5)
+                _set_cell_text(cells[5], str(issue.suggestion or "—"), size=8.5)
+                if i % 2 == 0:
+                    for c in cells:
+                        _shade_cell(c, SHADE_SUBTLE)
+            _set_col_widths(table2, [1.1, 2.6, 2.0, 2.2, 4.0, 3.1])
+
+        # 6.4 AI 提示与建议汇总（去重）
+        _para(doc, "", space_after=4)
+        _h2(doc, "6.4 AI 提示与建议汇总")
+        tips: List[str] = []
+        for _res, issue in ai_pairs:
+            sug = str(issue.suggestion or "").strip()
+            if sug and sug not in tips:
+                tips.append(sug)
+        if not tips:
+            _para(doc, "本次 AI 核验未产生额外提示与建议。", size=10.5,
+                  line_spacing=1.5, first_line_indent=21)
+        else:
+            for i, tip in enumerate(tips[:30], 1):
+                _para(doc, f"{i}. {tip}", size=10, line_spacing=1.4, space_after=3)
+            if len(tips) > 30:
+                _para(doc, f"注：仅列出前 30 条，其余 {len(tips) - 30} 条详见 6.3 逐条清单。",
+                      size=8.5, color=COLOR_MUTED, space_before=3, space_after=0)
+
+        # 6.5 未通过 AI 核验的文件
+        abnormal = [r for r in self.results
+                    if r.ai_status and r.ai_status not in ("ok", "")]
+        if abnormal:
+            _para(doc, "", space_after=4)
+            _h2(doc, "6.5 未完成 AI 核验的文件")
+            table3 = doc.add_table(rows=1, cols=3)
+            table3.style = "Table Grid"
+            headers3 = ["序号", "文件", "AI 核验状态说明"]
+            for idx, head in enumerate(headers3):
+                _set_cell_text(table3.rows[0].cells[idx], head, size=9.5, bold=True,
+                               align=WD_ALIGN_PARAGRAPH.CENTER, font=FONT_TITLE)
+                _shade_cell(table3.rows[0].cells[idx], SHADE_HEADER)
+            _set_repeat_header(table3.rows[0])
+            for i, res in enumerate(abnormal, 1):
+                cells = table3.add_row().cells
+                _set_cell_text(cells[0], str(i), size=9, align=WD_ALIGN_PARAGRAPH.CENTER)
+                _set_cell_text(cells[1], res.file_name, size=9)
+                _set_cell_text(cells[2], f"{AI_STATUS_LABEL.get(res.ai_status, res.ai_status)}："
+                                         f"{res.ai_note}", size=9, color=COLOR_MUTED)
+            _set_col_widths(table3, [1.3, 5.0, 8.7])
+
+    # ------------------------------------------------------------------
     def _suggestions(self, doc: Any) -> None:
-        """六、整改建议。"""
-        _h1(doc, "六、整改建议")
-        by_rule: Dict[str, int] = dict(self.summary.get("by_rule", {}) or {})
+        """七、整改建议（本地规则建议与 AI 提示合并汇总）。"""
+        _h1(doc, "七、整改建议")
+        by_rule: Dict[str, int] = self._expanded_by_rule()
         sev = self.summary.get("severity", {}) or {}
 
-        _h2(doc, "6.1 总体整改要求")
+        _h2(doc, "7.1 总体整改要求")
         general = [
             "按「严重 → 一般 → 轻微」的顺序推进整改，严重问题应在归档前全部清零。",
             "整改应在原始文档副本上进行，保留修改痕迹与版本记录，便于复核与追溯。",
             "整改完成后使用本工具重新检测，确认问题闭环后再进入归档或报送流程。",
             "涉密文档整改全过程应在本机离线环境完成，禁止通过网络传输或外发。",
         ]
+        ai_tip_cnt = sum(1 for _r, i in self._ai_pairs() if str(i.suggestion or "").strip())
+        if ai_tip_cnt:
+            general.append(
+                f"AI 智能核验共给出 {ai_tip_cnt} 条语义层提示与建议（详见第六章 6.4），"
+                "请与本地规则问题一并纳入整改台账，逐条销项。")
         for idx, text in enumerate(general, start=1):
             _para(doc, f"{idx}. {text}", size=10.5, line_spacing=1.5, space_after=3)
 
         if by_rule:
             _para(doc, "", space_after=4)
-            _h2(doc, "6.2 高频问题针对性建议")
-            top_rules = list(by_rule.items())[:8]
+            _h2(doc, "7.2 高频问题针对性建议（本地规则 + AI 智能核验）")
+            top_rules = list(by_rule.items())[:10]
             suggestion_map = self._collect_suggestions()
             table = doc.add_table(rows=1, cols=4)
             table.style = "Table Grid"
@@ -568,7 +872,7 @@ class ReportBuilder:
             _set_col_widths(table, [1.3, 4.2, 1.5, 8.0])
 
         _para(doc, "", space_after=4)
-        _h2(doc, "6.3 结论")
+        _h2(doc, "7.3 结论")
         if int(sev.get("high", 0)) > 0:
             concl = ("本次检测发现严重级别问题，相关文档暂不具备归档 / 报送条件，"
                      "请优先完成严重问题整改并重新检测。")
@@ -580,12 +884,14 @@ class ReportBuilder:
         _para(doc, concl, size=10.5, bold=True, line_spacing=1.5, first_line_indent=21)
 
     def _collect_suggestions(self) -> Dict[str, str]:
-        """从检测结果中提取 规则名 -> 建议 的映射。"""
+        """从检测结果中提取 规则名 -> 建议 的映射（AI 问题按类别展开，与本地规则合并）。"""
         out: Dict[str, str] = {}
         for res in self.results:
             for issue in res.issues:
-                if issue.rule_title not in out and issue.suggestion:
-                    out[issue.rule_title] = issue.suggestion
+                key = (f"{AI_TITLE} · {self._ai_category(issue)}"
+                       if self._is_ai(issue) else issue.rule_title)
+                if key not in out and issue.suggestion:
+                    out[key] = str(issue.suggestion)
         return out
 
     # ------------------------------------------------------------------
@@ -598,6 +904,10 @@ class ReportBuilder:
               size=9, align=WD_ALIGN_PARAGRAPH.RIGHT, color=COLOR_MUTED, space_after=2)
         _para(doc, "生成工具：文档低级错误检查工具（本地离线版）",
               size=9, align=WD_ALIGN_PARAGRAPH.RIGHT, color=COLOR_MUTED, space_after=2)
+        if self._ai_pairs():
+            _para(doc, f"说明：本报告第六章汇总了 {AI_TITLE}的提示词与全部问题、提示，"
+                       "并已与本地规则校验问题合并计入前述统计与明细。",
+                  size=9, align=WD_ALIGN_PARAGRAPH.RIGHT, color=COLOR_MUTED, space_after=2)
         _para(doc, "保密声明：本报告及检测过程全程离线，未产生任何网络传输记录。",
               size=9, align=WD_ALIGN_PARAGRAPH.RIGHT, color=COLOR_MUTED, space_after=0)
 
@@ -605,10 +915,12 @@ class ReportBuilder:
 def build_report(results: List[FileResult], summary: Dict[str, Any], out_path: str,
                  rule_summary: Optional[Dict[str, Any]] = None,
                  operator: str = "", org: str = "",
-                 include_cover: bool = True, detail_columns: Optional[List[str]] = None) -> str:
+                 include_cover: bool = True, detail_columns: Optional[List[str]] = None,
+                 ai_review: Optional[Dict[str, Any]] = None) -> str:
     """函数式入口：生成 Word 报告并返回保存路径。"""
     builder = ReportBuilder(results, summary, rule_summary, operator, org,
-                            include_cover=include_cover, detail_columns=detail_columns)
+                            include_cover=include_cover, detail_columns=detail_columns,
+                            ai_review=ai_review)
     return builder.build(out_path)
 
 

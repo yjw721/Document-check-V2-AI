@@ -53,6 +53,56 @@ _SENT_END_RE = re.compile(r"[。！？；\n]")
 # 自创 / 未定义缩写启发式：2~5 位连续大写字母
 _ALLCAPS_RE = re.compile(r"\b[A-Z]{2,5}\b")
 
+# 模块级词库缓存：首次加载后复用，避免每文件重复读取
+_BANKS_CACHE: Optional[Dict[str, Any]] = None
+_CACHE_MTIMES: Dict[str, float] = {}
+
+
+def _get_file_mtime(path: str) -> float:
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return 0.0
+
+
+def _load_banks_cached() -> Dict[str, Any]:
+    """加载词库（带缓存：文件修改时间未变则复用）"""
+    global _BANKS_CACHE, _CACHE_MTIMES
+    
+    # 检查所有词库文件是否有变更
+    dict_files = [
+        "colloquial.txt", "redundant.txt", "confusable.txt", "ambiguous.txt",
+        "typo.txt", "en_typo.txt", "units.txt", "abbrev.txt",
+        "grammar.txt", "vocab.txt", "asset_terms.txt",
+    ]
+    
+    need_reload = _BANKS_CACHE is None
+    if not need_reload:
+        for fname in dict_files:
+            path = os.path.join(_DICT_DIR, fname)
+            mtime = _get_file_mtime(path)
+            if _CACHE_MTIMES.get(fname, 0) != mtime:
+                need_reload = True
+                break
+    
+    if need_reload:
+        _BANKS_CACHE = {
+            "colloquial": _load_kv(os.path.join(_DICT_DIR, "colloquial.txt")),
+            "redundant": _load_kv(os.path.join(_DICT_DIR, "redundant.txt")),
+            "confusable": _load_confusable(os.path.join(_DICT_DIR, "confusable.txt")),
+            "ambiguous": _load_kv(os.path.join(_DICT_DIR, "ambiguous.txt")),
+            "typo": _load_typo(os.path.join(_DICT_DIR, "typo.txt")),
+            "en_typo": _load_en_typo(os.path.join(_DICT_DIR, "en_typo.txt")),
+            "units": _load_units(os.path.join(_DICT_DIR, "units.txt")),
+            "abbrev": _load_abbrev(os.path.join(_DICT_DIR, "abbrev.txt")),
+            "grammar": _load_patterns(os.path.join(_DICT_DIR, "grammar.txt")),
+            "vocab": _load_patterns(os.path.join(_DICT_DIR, "vocab.txt")),
+            "asset_terms": _load_patterns(os.path.join(_DICT_DIR, "asset_terms.txt")),
+        }
+        _CACHE_MTIMES = {fname: _get_file_mtime(os.path.join(_DICT_DIR, fname)) for fname in dict_files}
+    
+    return _BANKS_CACHE
+
 
 # ---------------------------------------------------------------------------
 # 词库加载（纯本地文件读取）
@@ -196,25 +246,7 @@ class TextNormChecker:
         self.cfg = config
         self.issues = issues_out          # 与调用方共享的同一问题列表（共用上限保护）
         self._limit = limit
-        self._banks = self._load_banks()
-
-    # ------------------------------------------------------------------
-    # 词库加载
-    # ------------------------------------------------------------------
-    def _load_banks(self) -> Dict[str, Any]:
-        return {
-            "colloquial": _load_kv(os.path.join(_DICT_DIR, "colloquial.txt")),
-            "redundant": _load_kv(os.path.join(_DICT_DIR, "redundant.txt")),
-            "confusable": _load_confusable(os.path.join(_DICT_DIR, "confusable.txt")),
-            "ambiguous": _load_kv(os.path.join(_DICT_DIR, "ambiguous.txt")),
-            "typo": _load_typo(os.path.join(_DICT_DIR, "typo.txt")),
-            "en_typo": _load_en_typo(os.path.join(_DICT_DIR, "en_typo.txt")),
-            "units": _load_units(os.path.join(_DICT_DIR, "units.txt")),
-            "abbrev": _load_abbrev(os.path.join(_DICT_DIR, "abbrev.txt")),
-            "grammar": _load_patterns(os.path.join(_DICT_DIR, "grammar.txt")),
-            "vocab": _load_patterns(os.path.join(_DICT_DIR, "vocab.txt")),
-            "asset_terms": _load_patterns(os.path.join(_DICT_DIR, "asset_terms.txt")),
-        }
+        self._banks = _load_banks_cached()
 
     # ------------------------------------------------------------------
     # 内部工具

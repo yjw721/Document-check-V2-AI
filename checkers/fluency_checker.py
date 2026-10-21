@@ -43,7 +43,7 @@ RULE_KEYS = ("fl_logic", "fl_incomplete", "fl_order", "fl_repeat", "fl_conj", "f
 # 分区注释：如「# ===== 单句逻辑断裂（fl_logic） =====」（支持全角 / 半角括号）
 _SEC_RE = re.compile(r"[（(](\w+)[)）]")
 
-_SENT_SPLIT = re.compile(r"[。！？；!?;]+")
+_SENT_SPLIT = re.compile(r"(?<!…)[。！？；!?;]+(?!…)")
 
 
 def _split_sentences(text: str) -> List[str]:

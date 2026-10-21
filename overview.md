@@ -410,3 +410,45 @@
 - 导出：新增 GET /api/ai_memory/export?format=csv|txt&kind=wordbanks|rules，前端 4 个导出按钮（词库/规则 × CSV/TXT，CSV 带 BOM 兼容 Excel）。
 - 全局总开关：settings ai.create_enabled（默认 true），「AI 智能核验配置」弹窗新增开关；关闭后对话式/文本式/文档式创建与自学习配对比对全部拦截并友好提示，已有规则词库与学习记忆不受影响。
 - 验证：E2E 27/27（开关拦截、文本式空校验、配对全链路、差异提取、样本入库+文档释放、content 兼容、导出四格式、非法格式 400、开关幂等、演示组完好）；真实 qwen3:8b 自学习：差异对 → 3 词条+3 规则全部带 ai_learning 标记入库（filtered=0）；真实文本式创建 13s 生成 2 规则（金额单位/日期格式）tag=AI文本创建；静态冒烟 98/98；前端构建通过并已部署。
+
+## 2026-09-23 · AI 核验可控性增强 + 修复「AI 核验完成报 AI 链接失败」
+
+**问题**：AI 核验阶段若部分调用失败（本地 60s 超时 / 服务未就绪），任务虽显示完成，但结果中被追加
+「AI 核验执行失败：…连接失败：…」伪问题条目（用户俗称「AI链接失败」），污染问题统计、最近问题与 Word 报告。
+
+**修复**（`checkers/ai_checker.py` + `app.py`）：
+1. 网络错误分类：超时（`_timeout_msg`）与「连接被拒绝」（`Ollama 未启动 / 接口配置错误」提示）分开，附可操作建议；
+2. 本地模式单次调用超时自动放宽至不小于 300 秒（`_LOCAL_TIMEOUT_FLOOR`，原配置 60s 对 CPU 推理/长文本必然误判）；
+3. 单段调用失败自动重试 `ai.retry`（默认 1 次，退避 0.5s×n）；
+4. 失败不再写伪问题：新增 `ai.fail_as_issue`（默认 False）——失败只落在文件级 `FileResult.ai_status/ai_note`
+   （ok/skip/fail/partial + 说明）与任务日志，问题数/统计/报告均不污染；开关打开时恢复旧行为。
+
+**可控性增强**：
+- 「导入与检测」页新增**本次任务**级 AI 核验快速控制：按全局设置 / 强制启用 / 停用 + 核验范围
+  （全部可解析文件 / 仅检测出问题的文件），经 `POST /api/upload?ai_enabled&ai_scope` 与 `/api/scan_folder` 透传，
+  不修改全局设置；
+- 新增全局 `ai.verify_scope`（all/issues）、`ai.retry`、`ai.fail_as_issue`（settings_manager 默认 + settings.default.json + 实时 settings.json）；
+- 文件列表新增「AI 核验」状态徽标列（已核验/跳过/失败/部分失败，悬停显原因）；等待页新增 AI 核验汇总卡
+  （已核验数/命中/失败/部分失败/跳过），失败仅提示、不污染统计；
+- `_run_ai_verify` 并发取自 `rate_limit.concurrency`（AI 配置页已可调），`ai_summary` 进入任务快照；
+- AI 配置页「调用与超时」与新增「核验行为」卡片：重试次数（0-5）、核验范围、失败写问题列表开关。
+
+**验证**：
+- 单测：连接拒绝分类、超时文案、本地超时下限 300s、retry=0/1 调用次数（1/2）、`_run_ai_verify`
+  失败→0 伪问题 + ai_status=fail、fail_as_issue=True→1 条兼容、issues 范围→跳过、成功路径命中→ok+status；
+- `python -m py_compile` 全部通过；tsc 零错误；`npm run build` 产物已同步 `static/`。
+
+## 2026-09-23 · 开放内置标准规则管理权限（可编辑 / 新增 / 删除）
+
+- 背景：此前「内置标准规则」只读，仅能启停开关；本轮开放全部管理权限——word / excel / textnorm /
+  fluency 四个分区规则均支持编辑（标题 / 严重级别 / 说明 / 整改建议）与启停，可**新增**规则、可**删除**规则，
+  保存写回 `config/rules.json`（复用既有 `POST /api/rules` 全量保存）。
+- 界面重构（`RulesOverviewTab.tsx` 内置标准规则分区）：卡片化表格行内编辑（启用开关 + 标题 + 级别下拉 +
+  说明 + 建议 + 删除），分区头新增「启用全部 / 停用全部 / 添加规则」；顶部「保存内置规则（脏检测禁用）+
+  撤销修改」；规则 key 以灰色小字展示便于定位（textnorm 分区 key 与词库检测项一一对应）。
+- 新增/删除语义：新增为生成唯一 key 的规则模板（保存后生效）；删除仅移除配置项（不影响检测程序本体，
+  已删除但检测程序内置的检测项将按其缺省「默认启用」运行）；删除前有确认弹窗。
+- 「恢复默认」入口已按需求移除（后端 restore 端点保留不动；AdminPage「检测全局限制」的恢复默认不受影响）。
+- 内置标准词库（词组）维持只读预览 + 启停开关（本次不开放其文本编辑）；「一键扫描清理」仍禁止批量清理内置来源条目（安全红线保留）。
+- 验证：tsc 零错误；`npm run build` 产物 `index-C7-WmROZ.js + index-DO9b4QVK.css` 已同步 `static/`；
+  TestClient 冒烟：新产物正常伺服、`/api/rules` 四分区齐备、内置规则标题编辑保存→落盘→还原全通过。

@@ -209,10 +209,13 @@ class WordChecker:
         self._lines = 0
         self._break_found = False
         # 文字规范 / 表述问题 / 自定义规则 / 自定义词库检测引擎（共享同一 issues 列表）
+        # 使用模块级缓存避免每文件重复读取配置
+        from checkers.custom_rules import get_custom_rules_cached
+        from checkers.wordbank import get_wordbanks_cached
         self.tn = TextNormChecker(self.cfg, self.issues, self._limit)
         self.fl = FluencyChecker(self.cfg, self.issues, self._limit, self._fluency_sensitivity)
-        self.cust = CustomRuleEngine(self.issues, self._limit)
-        self.wb = WordBankEngine(self.issues, self._limit)
+        self.cust = CustomRuleEngine(self.issues, self._limit, get_custom_rules_cached())
+        self.wb = WordBankEngine(self.issues, self._limit, get_wordbanks_cached())
         para_stat = {"paragraphs": 0, "headings": 0, "tables": 0, "images": 0}
 
         try:
@@ -279,6 +282,9 @@ class WordChecker:
         br_qn = qn("w:br")
         lrb_qn = qn("w:lastRenderedPageBreak")
         type_qn = qn("w:type")
+        # 可配置的页码估算参数
+        chars_per_line = int(self.cfg.param(self.kind, "page_estimate", "chars_per_line", 36) or 36)
+        lines_per_page = int(self.cfg.param(self.kind, "page_estimate", "lines_per_page", 38) or 38)
         if not self._break_found:
             try:
                 brs = para._p.findall(".//" + br_qn)
@@ -303,10 +309,10 @@ class WordChecker:
             lines = text.count("\n") + 1
             stripped = text.replace("\n", "")
             if stripped:
-                lines += max(0, (len(stripped) - 1) // 36)
+                lines += max(0, (len(stripped) - 1) // chars_per_line)
             self._lines += lines
-            while self._lines >= 38:
-                self._lines -= 38
+            while self._lines >= lines_per_page:
+                self._lines -= lines_per_page
                 self._page += 1
         return self._page
 
@@ -611,9 +617,10 @@ class WordChecker:
 
             # 估算表格所占行数（用于页码定位）
             if not self._break_found:
+                lines_per_page = int(self.cfg.param(self.kind, "page_estimate", "lines_per_page", 38) or 38)
                 self._lines += min(len(rows), 40)
-                while self._lines >= 38:
-                    self._lines -= 38
+                while self._lines >= lines_per_page:
+                    self._lines -= lines_per_page
                     self._page += 1
 
             # 构建文本矩阵（合并单元格会重复出现同一文本，属正常）

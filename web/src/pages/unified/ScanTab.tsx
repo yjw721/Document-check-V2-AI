@@ -141,7 +141,7 @@ export default function ScanTab() {
   const exportBackup = async (ids: string[], fmt: "txt" | "csv" = "txt") => {
     try {
       const blob = await api.scanExport({ ids, format: fmt });
-      const stamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "");
+      const stamp = new Date().toISOString().slice(0, 19).replace(/\D/g, "");
       download(blob, `scan_backup_${stamp}.${fmt}`);
       toast(`已导出 ${ids.length} 条备份（${fmt.toUpperCase()}）`);
     } catch (e) {

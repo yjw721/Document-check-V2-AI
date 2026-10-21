@@ -22,6 +22,7 @@ import csv
 import io
 import json
 import os
+import threading
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -29,6 +30,9 @@ from checkers.base import Issue, clip
 
 CONFIG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config")
 WORDBANKS_PATH = os.path.join(CONFIG_DIR, "wordbanks.json")
+
+# 多用户并发写保护：同时保存时串行化，避免互相覆盖 / 写坏文件
+SAVE_LOCK = threading.Lock()
 
 VALID_SCOPE = {"all", "word", "excel", "pdf"}
 VALID_MODULE = {"format_regex", "text_word"}
@@ -60,21 +64,42 @@ def load_wordbanks(path: str = WORDBANKS_PATH) -> Dict[str, Any]:
         return _empty_data()
 
 
+# 模块级缓存：避免每文件重复读取
+_WORDBANKS_CACHE: Optional[Dict[str, Any]] = None
+_WORDBANKS_MTIME: float = 0.0
+
+
+def get_wordbanks_cached() -> Dict[str, Any]:
+    """获取词库（带缓存：文件修改时间未变则复用）"""
+    global _WORDBANKS_CACHE, _WORDBANKS_MTIME
+    try:
+        mtime = os.path.getmtime(WORDBANKS_PATH)
+    except OSError:
+        mtime = 0.0
+    
+    if _WORDBANKS_CACHE is None or mtime != _WORDBANKS_MTIME:
+        _WORDBANKS_CACHE = load_wordbanks()
+        _WORDBANKS_MTIME = mtime
+    return _WORDBANKS_CACHE
+
+
 def save_wordbanks(data: Dict[str, Any], path: str = WORDBANKS_PATH) -> bool:
-    """写回本地 JSON（原子替换）。成功返回 True。"""
+    """写回本地 JSON（原子替换）。多用户并发写加锁串行化。成功返回 True。"""
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         tmp = path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as fp:
-            json.dump(data, fp, ensure_ascii=False, indent=2)
-        os.replace(tmp, path)
+        with SAVE_LOCK:
+            with open(tmp, "w", encoding="utf-8") as fp:
+                json.dump(data, fp, ensure_ascii=False, indent=2)
+            os.replace(tmp, path)
         return True
     except OSError:
         return False
 
 
 def gen_id(prefix: str = "wb") -> str:
-    return prefix + uuid.uuid4().hex[:8]
+    # 12 hex：生日碰撞阈值约 1.6 千万，避免大批量导入后 ID 冲突
+    return prefix + uuid.uuid4().hex[:12]
 
 
 # ---------------------------------------------------------------------------
@@ -89,6 +114,8 @@ def parse_entries_import(raw_text: str) -> List[Dict[str, Any]]:
         - TXT：每行一条，支持「keyword|tag|suggestion」或纯「keyword」
     """
     raw_text = raw_text.replace("\r\n", "\n").replace("\r", "\n")
+    # 去 BOM：Windows / Excel 导出的 UTF-8 CSV 常见开头带 \ufeff，否则 DictReader 读不到 keyword 字段 → 静默丢全部
+    raw_text = raw_text.lstrip("\ufeff")
     stripped = raw_text.strip()
     if not stripped:
         return []

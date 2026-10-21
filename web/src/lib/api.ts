@@ -14,23 +14,33 @@ import type {
   AiRef,
   AiSettings,
   AiActivityLog,
+  ActivityLog,
   CustomRulesData,
   DictionariesData,
   DictionaryContent,
   FilesData,
   IssueStateBody,
   IssuesData,
+  KbAskResp,
+  KbStatus,
+  KbUploadResp,
   OverviewData,
   RulesData,
   ScanCleanResp,
   ScanResult,
   SettingsData,
+  AiSkill,
   TaskSnapshot,
   TaskStartResult,
   TemplateDraft,
   TemplateImportResult,
   WordbanksData,
   WordImportResult,
+  ValMeta,
+  ValUploadResp,
+  ValRunResp,
+  ValTaskSnapshot,
+  ValResultResp,
 } from "./types";
 
 const API_BASE =
@@ -38,15 +48,68 @@ const API_BASE =
     ? ""
     : "http://127.0.0.1:8501";
 
+/** 本次检测任务的 AI 行为覆盖（不修改全局设置）：null/undefined = 按全局设置 */
+export interface AiTaskOverride {
+  enabled?: boolean | null;
+  scope?: "all" | "issues" | "";
+}
+
+/* ---------- 工作区隔离 + 访问口令（多用户 / 局域网共享） ---------- */
+const WS_KEY = "docchk_ws";
+const TOKEN_KEY = "docchk_token";
+
+function safeGet(k: string): string {
+  try {
+    return localStorage.getItem(k) || "";
+  } catch {
+    return "";
+  }
+}
+function safeSet(k: string, v: string): void {
+  try {
+    if (v) localStorage.setItem(k, v);
+    else localStorage.removeItem(k);
+  } catch {
+    /* 沙箱/隐私模式：仅本次会话生效 */
+  }
+}
+
+/** 每个浏览器会话一个随机工作区 id，检测结果互不覆盖；刷新后保持。 */
+function getWorkspace(): string {
+  let w = safeGet(WS_KEY);
+  if (!w) {
+    w = "w_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+    safeSet(WS_KEY, w);
+  }
+  return w;
+}
+
+let accessToken = safeGet(TOKEN_KEY);
+export function setAccessToken(t: string): void {
+  accessToken = t;
+  safeSet(TOKEN_KEY, t);
+}
+export function getAccessToken(): string {
+  return accessToken;
+}
+export function clearAccessToken(): void {
+  setAccessToken("");
+}
+
 export interface ApiOptions {
   /** multipart/form-data：body 直接作为 FormData */
   form?: boolean;
   /** 期望返回 Blob（报告下载） */
   blob?: boolean;
+  /** fetch 缓存策略（如 "no-store" 强制绕过 HTTP 缓存，用于结果刷新） */
+  cache?: RequestCache;
 }
 
 async function request<T>(method: string, path: string, body?: unknown, opts: ApiOptions = {}): Promise<T> {
   const init: RequestInit = { method, headers: {} };
+  if (opts.cache) init.cache = opts.cache;
+  (init.headers as Record<string, string>)["X-Workspace"] = getWorkspace();
+  if (accessToken) (init.headers as Record<string, string>)["X-Access-Token"] = accessToken;
   if (body !== undefined) {
     // FormData 自动按 multipart 发送（浏览器自动带 boundary，切勿手动设 JSON 头）
     if (opts.form || body instanceof FormData) {
@@ -59,6 +122,7 @@ async function request<T>(method: string, path: string, body?: unknown, opts: Ap
   const r = await fetch(API_BASE + path, init);
   if (opts.blob) {
     if (!r.ok) {
+      if (r.status === 401) window.dispatchEvent(new CustomEvent("docchk:unauthorized"));
       const j = await r.json().catch(() => null);
       throw new Error((j as { detail?: string } | null)?.detail || "请求失败");
     }
@@ -67,7 +131,12 @@ async function request<T>(method: string, path: string, body?: unknown, opts: Ap
   const ct = r.headers.get("content-type") || "";
   if (ct.includes("application/json")) {
     const j = (await r.json()) as T & { detail?: string };
-    if (!r.ok) throw new Error(j.detail || "请求失败");
+    if (!r.ok) {
+      if (r.status === 401 && !path.startsWith("/api/security/ping")) {
+        window.dispatchEvent(new CustomEvent("docchk:unauthorized"));
+      }
+      throw new Error(j.detail || "请求失败");
+    }
     return j;
   }
   if (!r.ok) throw new Error("请求失败");
@@ -75,16 +144,32 @@ async function request<T>(method: string, path: string, body?: unknown, opts: Ap
 }
 
 export const api = {
+  /* ---------- 访问安全探针（免口令） ---------- */
+  securityPing: () =>
+    request<{ ok: boolean; auth_required: boolean; authorized: boolean }>("GET", "/api/security/ping"),
+
   /* ---------- 总览 ---------- */
   overview: () => request<OverviewData>("GET", "/api/overview"),
 
   /* ---------- 文件 / 检测 ---------- */
   files: () => request<FilesData>("GET", "/api/files"),
-  issues: () => request<IssuesData>("GET", "/api/issues"),
+  issues: (opts?: ApiOptions) => request<IssuesData>("GET", "/api/issues", undefined, opts),
   setIssueState: (body: IssueStateBody) => request<{ ok: boolean }>("POST", "/api/issue_state", body),
-  upload: (fd: FormData) => request<TaskStartResult>("POST", "/api/upload", fd, { form: true }),
-  scanFolder: (body: { folder: string; recursive: boolean }) =>
-    request<TaskStartResult>("POST", "/api/scan_folder", body),
+  upload: (fd: FormData, ai?: AiTaskOverride) => {
+    if (ai) {
+      if (ai.enabled != null) fd.append("ai_enabled", ai.enabled ? "1" : "0");
+      if (ai.scope) fd.append("ai_scope", ai.scope);
+    }
+    return request<TaskStartResult>("POST", "/api/upload", fd, { form: true });
+  },
+  scanFolder: (body: { folder: string; recursive: boolean; ai?: AiTaskOverride }) => {
+    const { ai, ...rest } = body;
+    return request<TaskStartResult>("POST", "/api/scan_folder", {
+      ...rest,
+      ai_enabled: ai && ai.enabled != null ? (ai.enabled ? "1" : "0") : undefined,
+      ai_scope: ai && ai.scope ? ai.scope : undefined,
+    });
+  },
   taskPoll: (taskId: string) => request<TaskSnapshot>("GET", `/api/task/${taskId}`),
   taskCancel: (taskId: string) => request<{ ok: boolean }>("POST", `/api/task/${taskId}/cancel`),
   clearData: () => request<{ ok: boolean }>("POST", "/api/clear_data"),
@@ -133,7 +218,12 @@ export const api = {
 
   /* ---------- AI 智能核验 ---------- */
   aiStatus: () => request<{ ai: AiSettings }>("GET", "/api/ai/status"),
-  aiModels: () => request<{ ok: boolean; models: string[]; message?: string }>("GET", "/api/ai/models"),
+  aiSkills: () => request<{ builtin: AiSkill[] }>("GET", "/api/ai/skills"),
+  aiModels: (baseUrl?: string) =>
+    request<{ ok: boolean; models: string[]; base_url?: string; message?: string }>(
+      "GET",
+      baseUrl ? `/api/ai/models?base_url=${encodeURIComponent(baseUrl)}` : "/api/ai/models",
+    ),
   aiTest: (body: Partial<AiSettings>) =>
     request<{ ok: boolean; message: string }>("POST", "/api/ai/test", body),
 
@@ -144,6 +234,16 @@ export const api = {
     ),
   aiLogsClear: () =>
     request<{ ok: boolean; cleared: number }>("POST", "/api/ai/logs/clear"),
+
+  /* ---------- 通用操作日志（规则/词库保存等） ---------- */
+  activityLogs: (module = "", limit = 200, offset = 0) =>
+    request<{ ok: boolean; logs: ActivityLog[]; total: number }>(
+      "GET", `/api/activity/logs?module=${encodeURIComponent(module)}&limit=${limit}&offset=${offset}`,
+    ),
+  logActivity: (payload: { module: string; action: string; detail?: string; operator?: string; ok?: boolean }) =>
+    request<{ ok: boolean }>("POST", "/api/activity/logs", payload),
+  activityLogsClear: (module = "") =>
+    request<{ ok: boolean; cleared: number }>("POST", "/api/activity/logs/clear", { module }),
 
   /* ---------- AI 参考资料 ---------- */
   aiRefs: () => request<{ refs: AiRef[] }>("GET", "/api/ai/refs"),
@@ -167,8 +267,13 @@ export const api = {
     fd.append("files", file);
     return request<BuildStartResp>("POST", "/api/ai/build/doc", fd);
   },
-  aiBuildLogs: (bid: string) =>
-    request<BuildLogsResp>("GET", `/api/ai/build/logs?bid=${encodeURIComponent(bid)}`),
+  aiBuildLogs: (bid: string, since = 0) =>
+    request<BuildLogsResp>(
+      "GET",
+      `/api/ai/build/logs?bid=${encodeURIComponent(bid)}${since > 0 ? `&since=${since}` : ""}`,
+    ),
+  aiBuildCancel: (bid: string) =>
+    request<{ ok: boolean; message?: string }>("POST", "/api/ai/build/cancel", { bid }),
 
   /* ---------- 本地 AI 自学习记忆（成对样本） ---------- */
   aiMemory: () => request<AiMemoryData>("GET", "/api/ai_memory"),
@@ -189,8 +294,13 @@ export const api = {
   }) => request<AiMemoryResp>("POST", "/api/ai_memory/samples", body),
   aiMemoryLearn: (sid: string) =>
     request<AiMemoryResp>("POST", `/api/ai_memory/samples/${sid}/learn`),
-  aiMemoryLearnLogs: (sid: string) =>
-    request<LearnLogsResp>("GET", `/api/ai_memory/samples/${sid}/learn/logs`),
+  aiMemoryLearnLogs: (sid: string, since = 0) =>
+    request<LearnLogsResp>(
+      "GET",
+      `/api/ai_memory/samples/${sid}/learn/logs${since > 0 ? `?since=${since}` : ""}`,
+    ),
+  aiMemoryLearnCancel: (sid: string) =>
+    request<{ ok: boolean; message?: string }>("POST", `/api/ai_memory/samples/${sid}/learn/cancel`),
   aiMemorySampleToggle: (sid: string, enabled: boolean) =>
     request<AiMemoryResp>("POST", `/api/ai_memory/samples/${sid}/toggle`, { enabled }),
   aiMemorySampleDelete: (sid: string) =>
@@ -203,7 +313,35 @@ export const api = {
   aiMemoryExport: (format: "csv" | "txt", kind: "wordbanks" | "rules") =>
     request<Blob>("GET", `/api/ai_memory/export?format=${format}&kind=${kind}`, undefined, { blob: true }),
 
+  /* ---------- 本地知识库（RAG 检索问答） ---------- */
+  kbStatus: () => request<KbStatus>("GET", "/api/rag/status"),
+  kbUpload: (files: File[]) => {
+    const fd = new FormData();
+    files.forEach((f) => fd.append("files", f));
+    return request<KbUploadResp>("POST", "/api/rag/upload", fd, { form: true });
+  },
+  kbAsk: (body: { question: string; top_k?: number }) => request<KbAskResp>("POST", "/api/rag/ask", body),
+  kbDelete: (ids: string[]) => request<{ ok: boolean; removed: number; names: string[] }>("POST", "/api/rag/delete", { ids }),
+  kbClear: () => request<{ ok: boolean }>("POST", "/api/rag/clear"),
+  kbDownload: (docId: string) => request<Blob>("GET", `/api/rag/file/${encodeURIComponent(docId)}`, undefined, { blob: true }),
+
   /* ---------- 报告 ---------- */
   report: (body: { operator: string; org: string; include_cover: boolean; report_filter?: "all" | "fluency" }) =>
     request<Blob>("POST", "/api/report", body, { blob: true }),
+
+  /* ---------- 资产评估报告智能核查（四阶段闭环） ---------- */
+  valMeta: () => request<ValMeta>("GET", "/api/valuation/meta"),
+  valUpload: (files: File[], slots: string[]) => {
+    const fd = new FormData();
+    files.forEach((f) => fd.append("files", f));
+    slots.forEach((s) => fd.append("slots", s));
+    return request<ValUploadResp>("POST", "/api/valuation/upload", fd, { form: true });
+  },
+  valRun: (body: { session_id: string; use_ai: boolean; nodes?: string[] }) =>
+    request<ValRunResp>("POST", "/api/valuation/run", body),
+  valTask: (taskId: string) => request<ValTaskSnapshot>("GET", `/api/valuation/task/${taskId}`),
+  valCancel: (taskId: string) => request<{ ok: boolean }>("POST", `/api/valuation/task/${taskId}/cancel`),
+  valResult: (taskId: string) => request<ValResultResp>("GET", `/api/valuation/result/${taskId}`),
+  valReport: (taskId: string) => request<Blob>("GET", `/api/valuation/report/${taskId}`, undefined, { blob: true }),
+  valReset: (sessionId?: string) => request<{ ok: boolean }>("POST", "/api/valuation/reset", { session_id: sessionId }),
 };

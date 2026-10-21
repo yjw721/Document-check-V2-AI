@@ -5,69 +5,80 @@ import HoloBadge from "../../components/ui/HoloBadge";
 import TaskProgress from "../../components/common/TaskProgress";
 import ThinkingLog from "../../components/common/ThinkingLog";
 import { api } from "../../lib/api";
-import { taskState, TASK_KEY } from "../../lib/taskState";
-import type { AiStream, TaskSnapshot } from "../../lib/types";
+import { useTaskState } from "../../lib/taskState";
+import type { AiStream } from "../../lib/types";
 import { useToast } from "../../components/ui/Toast";
 
 /* 标签3 · 核验等待界面：实时进度条 + AI 思考过程动态面板 + 取消/错误/自动跳转 */
 export default function WaitingTab() {
   const toast = useToast();
-  const [snap, setSnap] = useState<TaskSnapshot | null>(null);
+  const { state, dispatch, clear, releaseTask } = useTaskState();
   const [gone, setGone] = useState(false);
   const [cancelling, setCancelling] = useState(false);
-  const jumped = useRef(false);
+  /* 已触发过终态处理（跳转 / 清理），防止重复执行 */
+  const settled = useRef(false);
+  /* 连续网络失败计数：容忍瞬时抖动，避免误判为「任务不存在」 */
+  const failCount = useRef(0);
 
-  const taskId = (() => {
-    try {
-      return localStorage.getItem(TASK_KEY) || "";
-    } catch {
-      return "";
-    }
-  })();
+  const taskId = state.taskId;
 
   useEffect(() => {
     if (!taskId) return;
     let stop = false;
-    const tick = async () => {
+    settled.current = false;
+    failCount.current = 0;
+
+    const loop = async () => {
+      let cont = false;
       try {
         const s = await api.taskPoll(taskId);
         if (stop) return;
-        setSnap(s);
-        taskState.setStatus(s.status);
-        if (s.status === "running") return true;
-        taskState.clear();
-        return false;
+        failCount.current = 0;
+        /* 先落快照（终态也要落，供下面的自动跳转读取状态），再决定是否继续 */
+        dispatch({ type: "SET_SNAPSHOT", payload: s });
+        cont = s.status === "running";
+        if (!cont) {
+          /* 终态：仅释放 taskId（保留快照），避免清空 status 导致跳转条件失效 */
+          releaseTask();
+        }
       } catch {
-        if (stop) return false;
-        setGone(true);
-        taskState.clear();
-        return false;
+        if (stop) return;
+        failCount.current += 1;
+        /* 容忍 2 次瞬时失败（后端忙碌 / 网络抖动），第 3 次才判定任务失效 */
+        if (failCount.current < 3) {
+          cont = true;
+        } else {
+          setGone(true);
+          clear();
+        }
       }
-    };
-    let timer = 0;
-    const loop = async () => {
-      const cont = await tick();
       if (cont && !stop) {
-        timer = window.setTimeout(loop, 800);
+        window.setTimeout(loop, 800);
       }
     };
     loop();
+
     return () => {
       stop = true;
-      window.clearTimeout(timer);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [taskId]);
 
-  // 核验完成 → 自动跳转错误结果明细页
+  /* 核验完成 → 自动跳转错误结果明细页 */
   useEffect(() => {
-    if (snap?.status === "done" && !jumped.current) {
-      jumped.current = true;
+    if (state.status === "done" && !settled.current) {
+      settled.current = true;
       toast("核验完成，已跳转错误详情");
-      window.setTimeout(() => {
+      const t = window.setTimeout(() => {
         window.location.hash = "#detection/issues";
       }, 400);
+      return () => window.clearTimeout(t);
     }
-  }, [snap?.status, toast]);
+    if (state.status === "error" && !settled.current) {
+      settled.current = true;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.status]);
 
   const cancel = async () => {
     if (!taskId) return;
@@ -75,9 +86,18 @@ export default function WaitingTab() {
     setCancelling(true);
     try {
       await api.taskCancel(taskId);
-      taskState.setStatus("cancelled");
-      setSnap((s) => (s ? { ...s, status: "cancelled" } : s));
-      taskState.clear();
+      dispatch({
+        type: "SET_SNAPSHOT",
+        payload: {
+          status: "cancelled",
+          progress: state.progress,
+          stage: state.stage,
+          stage_text: state.stageText,
+          logs: state.logs,
+          error: state.error,
+        },
+      });
+      clear();
       toast("已取消核验");
     } catch (e) {
       toast((e as Error).message, "err");
@@ -87,11 +107,16 @@ export default function WaitingTab() {
   };
 
   const back = () => {
-    taskState.clear();
+    clear();
     window.location.hash = "#detection/upload";
   };
 
-  if (!taskId) {
+  const status = state.status ?? "running";
+  const finished = status === "done" || status === "cancelled" || status === "error";
+  const done = status === "done";
+
+  /* taskId 已被释放（任务结束）但仍有终态快照 → 继续展示结果卡片而非空态 */
+  if (!taskId && !finished) {
     return (
       <HoloCard className="p-8 text-center" glow="sm">
         <div className="text-4xl">🧭</div>
@@ -102,10 +127,6 @@ export default function WaitingTab() {
       </HoloCard>
     );
   }
-
-  const status = snap?.status ?? "running";
-  const finished = status === "done" || status === "cancelled" || status === "error";
-  const done = status === "done";
 
   return (
     <div className="space-y-4">
@@ -126,12 +147,12 @@ export default function WaitingTab() {
         </div>
 
         <div className="mt-5">
-          <TaskProgress percent={snap?.progress ?? 0} stageText={snap?.stage_text ?? "文件解析"} />
+          <TaskProgress percent={state.progress} stageText={state.stageText ?? "文件解析"} />
         </div>
 
         {(status === "error" || gone) && (
           <div className="mt-4 rounded-xl border border-[rgba(255,107,125,0.35)] bg-[rgba(255,107,125,0.08)] px-3.5 py-3 text-xs text-[var(--tone-danger-soft)]">
-            {snap?.error || "任务不存在或已过期，请重新发起核验。"}（已完成部分进度保留在进度条中，结果未写入报告）
+            {state.error || "任务不存在或已过期，请重新发起核验。"}（已完成部分进度保留在进度条中，结果未写入报告）
           </div>
         )}
         {status === "cancelled" && (
@@ -142,17 +163,39 @@ export default function WaitingTab() {
 
         {!done && (
           <div className="mt-4">
-            <ThinkingLog logs={snap?.logs ?? []} />
+            <ThinkingLog logs={state.logs} />
           </div>
         )}
 
         {/* AI 智能核验 · 本地模型推理流（逐 token 实时展示） */}
-        {snap?.ai_stream && (
+        {state.ai_stream && (
           <div className="mt-4">
             <AiStreamPanel
-              stream={snap.ai_stream}
-              running={snap.status === "running" && snap.stage === "ai"}
+              stream={state.ai_stream}
+              running={state.status === "running" && state.stage === "ai"}
             />
+          </div>
+        )}
+
+        {/* AI 核验阶段汇总（任务完成时展示，失败仅提示、不污染问题统计） */}
+        {finished && state.ai_summary && state.ai_summary.files > 0 && (
+          <div className="mt-4 rounded-xl border border-white/10 bg-white/[0.03] px-3.5 py-3 text-xs leading-relaxed">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm">🧠</span>
+              <b className="text-xs font-semibold tracking-wide text-white/85">AI 智能核验汇总</b>
+              <HoloBadge tone={state.ai_summary.fail > 0 || state.ai_summary.partial > 0 ? "warn" : "ok"}>
+                {state.ai_summary.fail > 0 || state.ai_summary.partial > 0 ? "部分未完成" : "全部完成"}
+              </HoloBadge>
+            </div>
+            <p className="mt-1.5 text-white/75">
+              已核验 {state.ai_summary.files} 个文件：命中 {state.ai_summary.hit} · 完成 {state.ai_summary.ok} ·
+              已跳过 {state.ai_summary.skip} · 失败 {state.ai_summary.fail}（部分失败 {state.ai_summary.partial}）
+            </p>
+            {(state.ai_summary.fail > 0 || state.ai_summary.partial > 0) && (
+              <p className="mt-1 text-[var(--tone-warn-soft)]">
+                部分文件 AI 核验未完成：具体原因见「文件列表」中各文件的 AI 状态徽标；阶段失败不再写入问题列表，不会污染问题统计与报告。
+              </p>
+            )}
           </div>
         )}
 

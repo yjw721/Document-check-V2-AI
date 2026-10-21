@@ -1,21 +1,16 @@
 {
-  "meta": {
-    "name": "自定义检测规则",
-    "offline_only": true,
-    "desc": "用户在界面【规则配置面板】中自建的规则，本地持久化，零联网。"
-  },
   "groups": [
     {
       "id": "g_fmt_demo",
       "name": "格式规范示例组",
       "category": "format_error",
       "scope": "all",
-      "enabled": true,
+      "enabled": false,
       "rules": [
         {
           "id": "r_demo1",
           "name": "禁止使用全角逗号后接空格",
-          "enabled": true,
+          "enabled": false,
           "match_mode": "regex",
           "pattern": "，\\s",
           "severity": "low",
@@ -29,12 +24,12 @@
       "name": "表述规范示例组",
       "category": "expression",
       "scope": "all",
-      "enabled": true,
+      "enabled": false,
       "rules": [
         {
           "id": "r_demo2",
           "name": "禁用口语词『咱们』",
-          "enabled": true,
+          "enabled": false,
           "match_mode": "keyword",
           "pattern": "咱们",
           "severity": "medium",
@@ -44,47 +39,549 @@
       ]
     },
     {
-      "id": "ai_learning",
-      "name": "本地AI学习",
-      "category": "format_error",
+      "id": "g651935d3",
+      "name": "外部导入 · 通用检测规则库 · 42 条",
+      "category": "expression",
       "scope": "all",
-      "enabled": true,
+      "enabled": false,
       "rules": [
         {
-          "id": "rdfebe962",
-          "name": "用词错误",
-          "enabled": true,
+          "id": "r9400ee25",
+          "name": "范本禁用表述「从事证券服务业务」",
+          "enabled": false,
           "match_mode": "keyword",
-          "pattern": "立马搞定",
-          "severity": "medium",
-          "tag": "本地AI自学习生成-人工校对样本",
-          "suggestion": "尽快完成",
-          "source": "ai_learning",
-          "sample_id": "s460e9a22"
+          "pattern": "从事证券服务业务",
+          "severity": "high",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 5 页：范本原文「节严重的，并处暂停或者禁止从事证券服务业务…」明确禁止该表述，命中时请人工核查是否存在违规承诺 / 违规表述。"
         },
         {
-          "id": "r1d9d9b92",
-          "name": "用词错误",
-          "enabled": true,
+          "id": "r22d7df06",
+          "name": "范本禁用表述「签署本人未承办业务的资产评」",
+          "enabled": false,
           "match_mode": "keyword",
-          "pattern": "尽快安排",
-          "severity": "medium",
-          "tag": "本地AI自学习生成-人工校对样本",
-          "suggestion": "立即安排",
-          "source": "ai_learning",
-          "sample_id": "s460e9a22"
+          "pattern": "签署本人未承办业务的资产评",
+          "severity": "high",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 6 页：范本原文「依法签署资产评估报告，不得签署本人未承办业务的资产评…」明确禁止该表述，命中时请人工核查是否存在违规承诺 / 违规表述。"
         },
         {
-          "id": "r7498eb0a",
-          "name": "语序错误",
-          "enabled": true,
+          "id": "r0f58b96e",
+          "name": "范本禁用表述「为中外」",
+          "enabled": false,
           "match_mode": "keyword",
-          "pattern": "请尽快落实处理",
+          "pattern": "为中外",
+          "severity": "high",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 10 页：范本原文「的情况下，也只是反映企业历史成本价值，通常不能为中外…」明确禁止该表述，命中时请人工核查是否存在违规承诺 / 违规表述。"
+        },
+        {
+          "id": "rb07d4999",
+          "name": "范本禁用表述「反应资产评估基本功能的全部」",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "反应资产评估基本功能的全部",
+          "severity": "high",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 14 页：范本原文「简单定位于鉴证或咨询，不能反应资产评估基本功能的全部，…」明确禁止该表述，命中时请人工核查是否存在违规承诺 / 违规表述。"
+        },
+        {
+          "id": "r6f5b26ab",
+          "name": "范本禁用表述「代替交易定价」",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "代替交易定价",
+          "severity": "high",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 15 页：范本原文「是资产评估机构，都不能代替交易定价…」明确禁止该表述，命中时请人工核查是否存在违规承诺 / 违规表述。"
+        },
+        {
+          "id": "r76d1871c",
+          "name": "范本禁用表述「作为成」",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "作为成",
+          "severity": "high",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 15 页：范本原文「因此，评估结果不能作为成…」明确禁止该表述，命中时请人工核查是否存在违规承诺 / 违规表述。"
+        },
+        {
+          "id": "r81471bbb",
+          "name": "范本禁用表述「以资产交易价格来衡量资产评估结果」",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "以资产交易价格来衡量资产评估结果",
+          "severity": "high",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 15 页：范本原文「交价格的保证，也不能以资产交易价格来衡量资产评估结果…」明确禁止该表述，命中时请人工核查是否存在违规承诺 / 违规表述。"
+        },
+        {
+          "id": "rc674dd77",
+          "name": "范本禁用表述「当按照交易行为背景下的评估理解抵」",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "当按照交易行为背景下的评估理解抵",
+          "severity": "high",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 18 页：范本原文「由此，我们不应当按照交易行为背景下的评估理解抵押贷款…」明确禁止该表述，命中时请人工核查是否存在违规承诺 / 违规表述。"
+        },
+        {
+          "id": "r45e370fd",
+          "name": "范本禁用表述「承担侵权」",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "承担侵权",
+          "severity": "high",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 21 页：范本原文「错，该鉴定行为与损失之间不存在因果关系，不应承担侵权…」明确禁止该表述，命中时请人工核查是否存在违规承诺 / 违规表述。"
+        },
+        {
+          "id": "r866d94a1",
+          "name": "范本禁用表述「对市场价」",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "对市场价",
+          "severity": "high",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 21 页：范本原文「2.交易类评估，属于模拟市场价值估算，不能对市场价…」明确禁止该表述，命中时请人工核查是否存在违规承诺 / 违规表述。"
+        },
+        {
+          "id": "rb9b27cea",
+          "name": "范本禁用表述「代替市场行为」",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "代替市场行为",
+          "severity": "high",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 21 页：范本原文「评估与市场行为密切相关，但又不能代替市场行为…」明确禁止该表述，命中时请人工核查是否存在违规承诺 / 违规表述。"
+        },
+        {
+          "id": "ra7e4876b",
+          "name": "范本禁用表述「当被认为是对评估对象可实现价格」",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "当被认为是对评估对象可实现价格",
+          "severity": "high",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 22 页：范本原文「实现价格，评估结论不应当被认为是对评估对象可实现价格…」明确禁止该表述，命中时请人工核查是否存在违规承诺 / 违规表述。"
+        },
+        {
+          "id": "r4fad02f5",
+          "name": "范本禁用表述「当是绝对的」",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "当是绝对的",
+          "severity": "high",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 22 页：范本原文「3.资产评估结果是相对的、有条件的，不应当是绝对的…」明确禁止该表述，命中时请人工核查是否存在违规承诺 / 违规表述。"
+        },
+        {
+          "id": "r73138018",
+          "name": "范本禁用表述「不将资产评估结果与资产交易价格直」",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "不将资产评估结果与资产交易价格直",
+          "severity": "high",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 23 页：范本原文「不得不将资产评估结果与资产交易价格直接挂钩，或者说，…」明确禁止该表述，命中时请人工核查是否存在违规承诺 / 违规表述。"
+        },
+        {
+          "id": "ra5abf6b4",
+          "name": "范本禁用表述「当要」",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "当要",
+          "severity": "high",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 25 页：范本原文「任能力是有局限的，或者评估师不是“万能的” ，也不应当要…」明确禁止该表述，命中时请人工核查是否存在违规承诺 / 违规表述。"
+        },
+        {
+          "id": "r4a7df86b",
+          "name": "范本禁用表述「已的做法」",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "已的做法",
+          "severity": "high",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 31 页：范本原文「检测、鉴定等报告或数据，成为资产评估不得已的做法…」明确禁止该表述，命中时请人工核查是否存在违规承诺 / 违规表述。"
+        },
+        {
+          "id": "rcd5b2147",
+          "name": "范本禁用表述「简单」",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "简单",
+          "severity": "high",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 31 页：范本原文「不能简单…」明确禁止该表述，命中时请人工核查是否存在违规承诺 / 违规表述。"
+        },
+        {
+          "id": "r0a143d21",
+          "name": "范本禁用表述「预计和量化未」",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "预计和量化未",
+          "severity": "high",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 32 页：范本原文「富的交易资料，都限制了市场法的使用，不能预计和量化未…」明确禁止该表述，命中时请人工核查是否存在违规承诺 / 违规表述。"
+        },
+        {
+          "id": "r8ae097d0",
+          "name": "范本禁用表述「弥补其造成的社会性损害的」",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "弥补其造成的社会性损害的",
+          "severity": "high",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 39 页：范本原文「责任仍不能弥补其造成的社会性损害的，就需要以刑法对其…」明确禁止该表述，命中时请人工核查是否存在违规承诺 / 违规表述。"
+        },
+        {
+          "id": "r560d9a70",
+          "name": "范本禁用表述「将检查调查人员的数据假设为正」",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "将检查调查人员的数据假设为正",
+          "severity": "high",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 66 页：范本原文「率” ，不能将检查调查人员的数据“假设”为正确的，认定错…」明确禁止该表述，命中时请人工核查是否存在违规承诺 / 违规表述。"
+        },
+        {
+          "id": "r50025a13",
+          "name": "范本禁用表述「由检查调查人」",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "由检查调查人",
+          "severity": "high",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 67 页：范本原文「“工作底稿内容缺失或不足”作为证据，不应由检查调查人…」明确禁止该表述，命中时请人工核查是否存在违规承诺 / 违规表述。"
+        },
+        {
+          "id": "r8bd97978",
+          "name": "范本禁用表述「独立作为重大遗漏判定标准」",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "独立作为重大遗漏判定标准",
+          "severity": "high",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 67 页：范本原文「员主观认定，也不应独立作为“重大遗漏”判定标准…」明确禁止该表述，命中时请人工核查是否存在违规承诺 / 违规表述。"
+        },
+        {
+          "id": "r7cf58c5e",
+          "name": "范本禁用表述「准确理解和正确使用评估结论」",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "准确理解和正确使用评估结论",
+          "severity": "high",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 69 页：范本原文「大影响的内容，致使评估委托人不能准确理解和正确使用评估结论…」明确禁止该表述，命中时请人工核查是否存在违规承诺 / 违规表述。"
+        },
+        {
+          "id": "rafe449e2",
+          "name": "范本禁用表述「当认定评估师的执业责任」",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "当认定评估师的执业责任",
+          "severity": "high",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 70 页：范本原文「估程序，不应当认定评估师的执业责任…」明确禁止该表述，命中时请人工核查是否存在违规承诺 / 违规表述。"
+        },
+        {
+          "id": "r2d46d2f0",
+          "name": "范本禁用表述「履行评估程序」",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "履行评估程序",
+          "severity": "high",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 72 页：范本原文「或者检查人员不能履行评估程序、 收集资料依据， 不能保证扣除资本性支出金额的…」明确禁止该表述，命中时请人工核查是否存在违规承诺 / 违规表述。"
+        },
+        {
+          "id": "raf066619",
+          "name": "范本禁用表述「准确计算所谓的正确结果」",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "准确计算所谓的正确结果",
+          "severity": "high",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 72 页：范本原文「准确性，进而不能准确计算所谓的正确结果…」明确禁止该表述，命中时请人工核查是否存在违规承诺 / 违规表述。"
+        },
+        {
+          "id": "rbed38dc5",
+          "name": "范本禁用表述「估算评估值」",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "估算评估值",
+          "severity": "high",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 74 页：范本原文「产，但不能估算评估值，未披露可能导致不能正确使用评估报告的情形…」明确禁止该表述，命中时请人工核查是否存在违规承诺 / 违规表述。"
+        },
+        {
+          "id": "rec2d20cb",
+          "name": "范本禁用表述「正确使用评估报告的」",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "正确使用评估报告的",
+          "severity": "high",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 75 页：范本原文「应披露未披露， 或披露不完整，可能导致不能正确使用评估报告的…」明确禁止该表述，命中时请人工核查是否存在违规承诺 / 违规表述。"
+        },
+        {
+          "id": "r95a4e79a",
+          "name": "范本禁用表述「正确使用评估报告的情形」",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "正确使用评估报告的情形",
+          "severity": "high",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 75 页：范本原文「有披露，可能会影响报告使用人不能正确使用评估报告的情形…」明确禁止该表述，命中时请人工核查是否存在违规承诺 / 违规表述。"
+        },
+        {
+          "id": "r0662b6f8",
+          "name": "范本禁用表述「估算评估值确定预计负债」",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "估算评估值确定预计负债",
+          "severity": "high",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 75 页：范本原文「经检查调查核实，评估存在或有事项，但不能估算评估值（确定预计负债） ，可能…」明确禁止该表述，命中时请人工核查是否存在违规承诺 / 违规表述。"
+        },
+        {
+          "id": "r6041eebf",
+          "name": "范本禁用表述「准确计」",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "准确计",
+          "severity": "high",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 76 页：范本原文「与第一种情形相比，尽管不能准确计…」明确禁止该表述，命中时请人工核查是否存在违规承诺 / 违规表述。"
+        },
+        {
+          "id": "r7a7f6846",
+          "name": "范本禁用表述「单独」",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "单独",
+          "severity": "high",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 77 页：范本原文「析不足，应当立足于评估结论存在重大不确定性，不应单独…」明确禁止该表述，命中时请人工核查是否存在违规承诺 / 违规表述。"
+        },
+        {
+          "id": "r1e83cd03",
+          "name": "范本禁用表述「用准确性定义评估结论」",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "用准确性定义评估结论",
+          "severity": "high",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 81 页：范本原文「估结论本身的相对合理性， 不能用 “准确性”定义评估结论…」明确禁止该表述，命中时请人工核查是否存在违规承诺 / 违规表述。"
+        },
+        {
+          "id": "rdbfadb57",
+          "name": "范本禁用表述「量化」",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "量化",
+          "severity": "high",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 82 页：范本原文「动机不能量化…」明确禁止该表述，命中时请人工核查是否存在违规承诺 / 违规表述。"
+        },
+        {
+          "id": "rd6a4b152",
+          "name": "范本禁用表述「准确计算」",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "准确计算",
+          "severity": "high",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 85 页：范本原文「与第一种情形相比， 尽管不能准确计算、…」明确禁止该表述，命中时请人工核查是否存在违规承诺 / 违规表述。"
+        },
+        {
+          "id": "r28c17ad4",
+          "name": "范本禁用表述「机械追求原则导向」",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "机械追求原则导向",
+          "severity": "high",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 90 页：范本原文「资产评估准则的相关要求内容，不能机械追求原则导向，…」明确禁止该表述，命中时请人工核查是否存在违规承诺 / 违规表述。"
+        },
+        {
+          "id": "r8a2a93d5",
+          "name": "范本禁用表述「稀里」",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "稀里",
+          "severity": "high",
+          "tag": "执业风险警示",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 91 页：范本原文「相同要求的函证工作，需要进行深入研究并明确，不能稀里…」明确禁止该表述，命中时请人工核查是否存在违规承诺 / 违规表述。"
+        },
+        {
+          "id": "r21a5b02c",
+          "name": "金额写法不规范（数字与「元」之间夹有空格）",
+          "enabled": false,
+          "match_mode": "regex",
+          "pattern": "\\d+(?:\\.\\d+)?\\s+元",
+          "severity": "high",
+          "tag": "格式严重错误",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 1 页：范本金额统一规范书写。检测到数字与「元」之间夹有空格，请按范本格式修正。"
+        },
+        {
+          "id": "r8f719578",
+          "name": "金额写法不规范（数字与「万元」之间夹有空格）",
+          "enabled": false,
+          "match_mode": "regex",
+          "pattern": "\\d+(?:\\.\\d+)?\\s+万元",
+          "severity": "high",
+          "tag": "格式严重错误",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 1 页：范本金额统一规范书写。检测到数字与「万元」之间夹有空格，请按范本格式修正。"
+        },
+        {
+          "id": "ra39da0bf",
+          "name": "金额写法不规范（「元人民币」语序不当，规范写法为「人民币…元」）",
+          "enabled": false,
+          "match_mode": "regex",
+          "pattern": "元人民币",
+          "severity": "high",
+          "tag": "格式严重错误",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 1 页：范本金额统一规范书写。检测到「元人民币」语序不当，规范写法为「人民币…元」，请按范本格式修正。"
+        },
+        {
+          "id": "rbbe0a9ac",
+          "name": "金额写法不规范（人民币金额缺少计量单位「元」）",
+          "enabled": false,
+          "match_mode": "regex",
+          "pattern": "人民币\\s*(\\d+(?:\\.\\d+)?)\\s*[RMB￥¥]?\\s*(?!元)",
+          "severity": "high",
+          "tag": "格式严重错误",
+          "suggestion": "依据基准《《重大遗漏资产评估报告判定研究》.pdf》第 1 页：范本金额统一规范书写。检测到人民币金额缺少计量单位「元」，请按范本格式修正。"
+        }
+      ]
+    },
+    {
+      "id": "g55a4d662",
+      "name": "AI 生成规则",
+      "category": "expression",
+      "scope": "all",
+      "enabled": false,
+      "rules": [
+        {
+          "id": "r27a3ab3b",
+          "name": "错误表述",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "评估基准日期",
           "severity": "medium",
-          "tag": "本地AI自学习生成-人工校对样本",
-          "suggestion": "请尽快处理落实",
-          "source": "ai_learning",
-          "sample_id": "s460e9a22"
+          "tag": "",
+          "suggestion": "评估基准日"
+        },
+        {
+          "id": "r9f802ac7",
+          "name": "错误表述",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "评估方法论",
+          "severity": "medium",
+          "tag": "",
+          "suggestion": "评估方法"
+        },
+        {
+          "id": "r19ee742e",
+          "name": "错误表述",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "评估价值类型",
+          "severity": "medium",
+          "tag": "",
+          "suggestion": "评估价值"
+        },
+        {
+          "id": "r5ef412a8",
+          "name": "错误表述",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "评估对象类型",
+          "severity": "medium",
+          "tag": "",
+          "suggestion": "评估对象"
+        },
+        {
+          "id": "r6b65ea2e",
+          "name": "错误表述",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "评估目的说明",
+          "severity": "medium",
+          "tag": "",
+          "suggestion": "评估目的"
+        },
+        {
+          "id": "r60a56d3b",
+          "name": "错误表述",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "评估程序步骤",
+          "severity": "medium",
+          "tag": "",
+          "suggestion": "评估程序"
+        },
+        {
+          "id": "r1c6c4ac9",
+          "name": "错误表述",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "评估依据文件",
+          "severity": "medium",
+          "tag": "",
+          "suggestion": "评估依据"
+        },
+        {
+          "id": "r5d873a3d",
+          "name": "错误表述",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "评估结论陈述",
+          "severity": "medium",
+          "tag": "",
+          "suggestion": "评估结论"
+        },
+        {
+          "id": "r9a3224bd",
+          "name": "错误表述",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "评估报告内容",
+          "severity": "medium",
+          "tag": "",
+          "suggestion": "评估报告"
+        },
+        {
+          "id": "r5db7e526",
+          "name": "错误表述",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "评估机构名称",
+          "severity": "medium",
+          "tag": "",
+          "suggestion": "评估机构"
+        }
+      ]
+    },
+    {
+      "id": "gc7f5952a",
+      "name": "测试规则组A",
+      "category": "format_error",
+      "scope": "all",
+      "enabled": false,
+      "rules": [
+        {
+          "id": "r8fc41de8",
+          "name": "测试规则",
+          "enabled": false,
+          "match_mode": "keyword",
+          "pattern": "错误写法xx",
+          "severity": "low",
+          "tag": "",
+          "suggestion": "正确写法yy"
         }
       ]
     }

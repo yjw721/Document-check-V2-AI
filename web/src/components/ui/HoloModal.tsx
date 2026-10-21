@@ -24,7 +24,8 @@ export default function HoloModal({ open, title, onClose, children, width = 560,
   if (!open) return null;
   return (
     <div
-      className="fixed inset-0 z-50 grid place-items-center bg-[rgba(5,8,16,0.66)] p-4 backdrop-blur-md"
+      className="fixed inset-0 grid place-items-center bg-[var(--overlay-bg)] p-4 backdrop-blur-md"
+      style={{ zIndex: 'var(--z-modal)' }}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}

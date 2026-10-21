@@ -345,7 +345,9 @@ export default function AdminPage() {
                   <div className="mt-1.5 text-[11px] leading-relaxed text-white/45">{meta.desc}</div>
                   {/* 方案缩略 */}
                   <div
-                    className={`mt-2 h-1.5 rounded-full ${key === "holographic" ? "holo-bg" : "bg-gradient-to-r from-[#6366f1] via-[#1e1b4b] to-[#38bdf8]"}`}
+                    className={`mt-2 h-1.5 rounded-full ${
+                      key === "holographic" ? "holo-bg" : key === "ink" ? "bg-gradient-to-r from-[#26221c] via-[#8b5e3c] to-[#a52a2a]" : "bg-gradient-to-r from-[#6366f1] via-[#1e1b4b] to-[#38bdf8]"
+                    }`}
                   />
                 </button>
               );

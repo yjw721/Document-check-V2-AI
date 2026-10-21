@@ -70,6 +70,9 @@ class FileResult:
     issues: List[Issue] = field(default_factory=list)
     stats: Dict[str, Any] = field(default_factory=dict)   # 文档规模统计
     truncated: bool = False              # 是否因超过上限而截断问题列表
+    # AI 智能核验阶段结果（仅用于界面提示与日志，不进问题统计 / 报告）
+    ai_status: str = ""                  # "" 未核验 / "ok" 完成 / "skip" 跳过 / "fail" 失败 / "partial" 部分失败
+    ai_note: str = ""                    # 人类可读说明（命中条数 / 跳过原因 / 失败原因）
 
     # ---------------- 便捷属性 ----------------
     @property

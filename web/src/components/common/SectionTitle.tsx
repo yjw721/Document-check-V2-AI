@@ -12,7 +12,7 @@ export default function SectionTitle({
 }) {
   return (
     <div className={`mb-4 flex items-center gap-2.5 ${className}`}>
-      <span className="h-4 w-1 rounded bg-gradient-to-b from-[#ff0080] via-[#7928ca] to-[#00d4ff]" />
+      <span className="holo-accent-bar h-4 w-1 rounded" />
       <h3 className="text-[15px] font-bold text-white">{children}</h3>
       {extra && <div className="ml-auto">{extra}</div>}
     </div>
