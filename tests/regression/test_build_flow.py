@@ -64,12 +64,17 @@ def fast_stub(content=None):
 
 
 import app as appmod  # noqa: E402
+import server.routes.ai_build as buildrt  # noqa: E402
 from checkers import ai_checker  # noqa: E402
+# 来源标记逻辑已上提到服务层（原位于 app.py 内），测试改为直接引用服务层实现
+from server.services.ai import mark_source as _mark_source
+from server.services.ai import BUILD_SOURCES as _BUILD_SOURCES
+from server.state import TASK_LOCK as _TASK_LOCK
 
 print("\n== 1. 来源标记写入（source / source_label 不再被 tag 吞掉）==")
 res = {"wordbanks": [{"name": "g", "entries": [{"keyword": "a", "tag": "易混淆词", "suggestion": "b"}]}],
        "rules": [{"name": "r", "match_mode": "keyword", "pattern": "x", "severity": "low", "suggestion": "y"}]}
-appmod._mark_source(res, "ai_dialogue", "AI对话创建")
+_mark_source(res, "ai_dialogue", "AI对话创建")
 e = res["wordbanks"][0]["entries"][0]
 chk("词条写入 source", e.get("source") == "ai_dialogue", str(e))
 chk("词条写入 source_label", e.get("source_label") == "AI对话创建", str(e))
@@ -77,7 +82,7 @@ chk("词条 AI 分类 tag 未被覆盖", e.get("tag") == "易混淆词", str(e))
 r0 = res["rules"][0]
 chk("规则写入 source", r0.get("source") == "ai_dialogue", str(r0))
 chk("规则写入 source_label", r0.get("source_label") == "AI对话创建", str(r0))
-chk("渠道表覆盖 doc", appmod._BUILD_SOURCES["doc"] == ("ai_doc", "AI文档创建"))
+chk("渠道表覆盖 doc", _BUILD_SOURCES["doc"] == ("ai_doc", "AI文档创建"))
 
 print("\n== 2. 空输入直接拒绝（不再空转一次本地推理）==")
 from fastapi.testclient import TestClient  # noqa: E402
@@ -132,21 +137,21 @@ chk("任务已停止", st.get("done") is True and st.get("running") is False, st
 chk("标记为已中止", st.get("cancelled") is True, str(st))
 
 print("\n== 5. 历史任务回收（不再无限占用内存）==")
-appmod._BUILD_LOGS.clear()
-appmod._BUILD_STATE.clear()
-with appmod._TASK_LOCK:
+buildrt._BUILD_LOGS.clear()
+buildrt._BUILD_STATE.clear()
+with _TASK_LOCK:
     for i in range(12):
         k = f"old{i}"
-        appmod._BUILD_STATE[k] = {"running": False, "done": True, "ok": True}
-        appmod._BUILD_LOGS[k] = [{"ts": "00:00:00", "kind": "stage", "text": "x"}]
-appmod._trim_build_tasks(keep="keep_me")
-with appmod._TASK_LOCK:
-    left = len(appmod._BUILD_STATE)
-chk("任务数收敛到上限", left <= appmod._MAX_BUILD_TASKS, f"实际 {left}")
-chk("日志随之回收", len(appmod._BUILD_LOGS) == left, f"state={left} logs={len(appmod._BUILD_LOGS)}")
+        buildrt._BUILD_STATE[k] = {"running": False, "done": True, "ok": True}
+        buildrt._BUILD_LOGS[k] = [{"ts": "00:00:00", "kind": "stage", "text": "x"}]
+buildrt._trim_build_tasks(keep="keep_me")
+with _TASK_LOCK:
+    left = len(buildrt._BUILD_STATE)
+chk("任务数收敛到上限", left <= buildrt._MAX_BUILD_TASKS, f"实际 {left}")
+chk("日志随之回收", len(buildrt._BUILD_LOGS) == left, f"state={left} logs={len(buildrt._BUILD_LOGS)}")
 
 print("\n== 6. bid 唯一性 ==")
-ids = {appmod._new_build_bid() for _ in range(200)}
+ids = {buildrt._new_build_bid() for _ in range(200)}
 chk("200 次生成无重复 bid", len(ids) == 200, f"实际 {len(ids)}")
 
 print(f"\n总计：OK={OK}  FAIL={FAIL}")

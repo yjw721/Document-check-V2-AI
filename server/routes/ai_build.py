@@ -63,7 +63,7 @@ from checkers.ai_memory import (
     add_sample as ai_memory_add_sample,
     export_learned as ai_memory_export,
 )
-from report.report_builder import build_report, default_report_name
+from reporting.report_builder import build_report, default_report_name
 from checkers.valuation.valuation_api import router as valuation_router
 from checkers.rag_store import (
     kb_status as rag_kb_status, index_docs as rag_index_docs,
@@ -84,6 +84,17 @@ from server.state import (
     cancel_task as _cancel_task,
     try_acquire_scan as _try_acquire_scan,
     release_scan as _release_scan,
+    WORKSPACES as _WORKSPACES,
+    SCAN_STATE as _SCAN_STATE,
+    TEMPLATE_STATES as _TEMPLATE_STATES,
+    TASKS as _TASKS,
+    TASK_LOCK as _TASK_LOCK,
+    WS_LOCK as _WS_LOCK,
+)
+from server.services.ai import (
+    ai_create_enabled as _ai_create_enabled,
+    mark_source as _mark_source,
+    BUILD_SOURCES as _BUILD_SOURCES,
 )
 from server.services.detection import (
     serialize_result as _serialize_result,
@@ -97,35 +108,6 @@ from server.services.detection import (
 )
 
 router = APIRouter()
-
-def _ai_create_enabled() -> bool:
-    """全局总开关「启用本地AI智能生成&自学习」（settings.ai.create_enabled）。"""
-    return bool((load_settings().get("ai") or {}).get("create_enabled", True))
-
-
-# 生成渠道 → (来源码, 面向用户的来源名)
-_BUILD_SOURCES: Dict[str, Tuple[str, str]] = {
-    "dialogue": ("ai_dialogue", "AI对话创建"),
-    "text": ("ai_text", "AI文本创建"),
-    "doc": ("ai_doc", "AI文档创建"),
-}
-
-
-def _mark_source(result: Dict[str, Any], source: str, label: str) -> None:
-    """给生成结果打来源标记，保存时随规则/词条一并入库。
-
-    source：机器码（ai_dialogue / ai_text / ai_doc），供前端筛选与统计使用。
-    label：中文来源名，写入独立字段 source_label —— 不占用 AI 自行生成的
-    分类 tag（旧实现用 setdefault 写 tag，而 tag 已存在，导致来源标记静默丢失）。
-    """
-    for r in result.get("rules") or []:
-        r["source"] = source
-        r["source_label"] = label
-    for w in result.get("wordbanks") or []:
-        for e in w.get("entries") or []:
-            e["source"] = source
-            e["source_label"] = label
-
 
 # ---- AI 规则/词库智能生成：对话式 / 文本式 / 文档式（流式展示推理过程） ----
 _BUILD_LOGS: Dict[str, List[Dict[str, Any]]] = {}
@@ -231,7 +213,7 @@ def _start_build(kind: str, text: str = "", raw: bytes = b"", filename: str = ""
     return bid
 
 
-@app.post("/api/ai/build/dialogue")
+@router.post("/api/ai/build/dialogue")
 def api_ai_build_dialogue(payload: Dict[str, Any]):
     """对话式创建：自然语言描述需求 → 生成词库分组 + 规则（流式展示推理过程）。"""
     if not _ai_create_enabled():
@@ -244,7 +226,7 @@ def api_ai_build_dialogue(payload: Dict[str, Any]):
             "message": "生成任务已启动（本地推理过程实时展示）"}
 
 
-@app.post("/api/ai/build/text")
+@router.post("/api/ai/build/text")
 def api_ai_build_text(payload: Dict[str, Any]):
     """文本式创建：粘贴准则/规范/范本文本 → AI 读取批量生成词库与规则（流式展示）。"""
     if not _ai_create_enabled():
@@ -257,7 +239,7 @@ def api_ai_build_text(payload: Dict[str, Any]):
             "message": "生成任务已启动（本地推理过程实时展示）"}
 
 
-@app.post("/api/ai/build/doc")
+@router.post("/api/ai/build/doc")
 async def api_ai_build_doc(files: List[UploadFile] = File(...)):
     """文档式创建：上传文档（.txt/.md/.csv/.docx/.pdf）→ AI 阅读提取词库与规则（流式展示）。"""
     if not _ai_create_enabled():
@@ -276,7 +258,7 @@ async def api_ai_build_doc(files: List[UploadFile] = File(...)):
             "message": "生成任务已启动（本地推理过程实时展示）"}
 
 
-@app.post("/api/ai/build/cancel")
+@router.post("/api/ai/build/cancel")
 def api_ai_build_cancel(payload: Dict[str, Any]):
     """中止生成任务：下一次 token 回调即中断流式推理，释放本地算力。"""
     bid = str((payload or {}).get("bid") or "")
@@ -290,7 +272,7 @@ def api_ai_build_cancel(payload: Dict[str, Any]):
     return {"ok": True, "message": "中止指令已下发，正在停止本地推理…"}
 
 
-@app.get("/api/ai/build/logs")
+@router.get("/api/ai/build/logs")
 def api_ai_build_logs(bid: str = "", since: int = 0):
     """轮询获取生成过程日志与运行状态（前端实时展示思考过程）。
 

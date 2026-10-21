@@ -4,6 +4,7 @@
 每个模块导出同名 `router`，由 server.main 统一 include_router。
 新增路由模块时在此登记即可。
 """
+from server import security
 from server.routes import (
     ai_build,
     ai_config,
@@ -21,6 +22,7 @@ from server.routes import (
 
 # 注册顺序仅影响 OpenAPI 文档分组展示，不影响功能
 ROUTERS = [
+    security.router,     # 访问口令探针（免鉴权）
     overview.router,     # 概览 / 文件 / 问题
     detection.router,    # 导入与检测 / 异步任务
     rules.router,        # 内置规则配置

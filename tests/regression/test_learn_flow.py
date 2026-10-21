@@ -107,6 +107,7 @@ def make_stub(chunks=30, delay=0.06, thinking=True):
 
 
 import app as appmod  # noqa: E402
+import server.routes.ai_memory as memrt  # noqa: E402
 from checkers import ai_checker  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -187,27 +188,27 @@ s2 = am.load_samples()["samples"][0]
 chk("样本回到待学习（不计为失败）", s2.get("status") == "pending", str(s2.get("status")))
 
 print("\n== 3. 学习任务内存回收 ==")
-with appmod._TASK_LOCK:
-    appmod._MLEARN_LOGS.clear()
-    appmod._MLEARN_STATE.clear()
+with memrt._TASK_LOCK:
+    memrt._MLEARN_LOGS.clear()
+    memrt._MLEARN_STATE.clear()
     for i in range(20):
         k = f"old{i}"
-        appmod._MLEARN_STATE[k] = {"running": False, "done": True, "ok": True}
-        appmod._MLEARN_LOGS[k] = [{"ts": "00:00:00", "kind": "stage", "text": "x"}]
-appmod._mtrim_tasks(keep="keep_me")
-with appmod._TASK_LOCK:
-    left = len(appmod._MLEARN_STATE)
-chk("任务数收敛到上限", left <= appmod._MAX_MLEARN_TASKS, f"实际 {left}")
-chk("日志随之回收", len(appmod._MLEARN_LOGS) == left,
-    f"state={left} logs={len(appmod._MLEARN_LOGS)}")
+        memrt._MLEARN_STATE[k] = {"running": False, "done": True, "ok": True}
+        memrt._MLEARN_LOGS[k] = [{"ts": "00:00:00", "kind": "stage", "text": "x"}]
+memrt._mtrim_tasks(keep="keep_me")
+with memrt._TASK_LOCK:
+    left = len(memrt._MLEARN_STATE)
+chk("任务数收敛到上限", left <= memrt._MAX_MLEARN_TASKS, f"实际 {left}")
+chk("日志随之回收", len(memrt._MLEARN_LOGS) == left,
+    f"state={left} logs={len(memrt._MLEARN_LOGS)}")
 
 print("\n== 4. 进度估算单调性（纯函数）==")
-pcts = [appmod._mlearn_pct(s) for s in ("start", "prompt", "infer", "parse", "validate", "done")]
+pcts = [memrt._mlearn_pct(s) for s in ("start", "prompt", "infer", "parse", "validate", "done")]
 chk("阶段基准百分比单调递增", all(pcts[i] <= pcts[i + 1] for i in range(len(pcts) - 1)), str(pcts))
-chk("推理期随输出增长", appmod._mlearn_pct("infer", 2000) > appmod._mlearn_pct("infer", 0),
-    f"{appmod._mlearn_pct('infer', 0)} -> {appmod._mlearn_pct('infer', 2000)}")
-chk("推理期进度封顶", appmod._mlearn_pct("infer", 10 ** 9) <= appmod._MLEARN_INFER_CAP,
-    str(appmod._mlearn_pct("infer", 10 ** 9)))
+chk("推理期随输出增长", memrt._mlearn_pct("infer", 2000) > memrt._mlearn_pct("infer", 0),
+    f"{memrt._mlearn_pct('infer', 0)} -> {memrt._mlearn_pct('infer', 2000)}")
+chk("推理期进度封顶", memrt._mlearn_pct("infer", 10 ** 9) <= memrt._MLEARN_INFER_CAP,
+    str(memrt._mlearn_pct("infer", 10 ** 9)))
 
 print(f"\n总计：OK={OK}  FAIL={FAIL}")
 sys.exit(1 if FAIL else 0)

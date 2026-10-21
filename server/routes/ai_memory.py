@@ -63,7 +63,7 @@ from checkers.ai_memory import (
     add_sample as ai_memory_add_sample,
     export_learned as ai_memory_export,
 )
-from report.report_builder import build_report, default_report_name
+from reporting.report_builder import build_report, default_report_name
 from checkers.valuation.valuation_api import router as valuation_router
 from checkers.rag_store import (
     kb_status as rag_kb_status, index_docs as rag_index_docs,
@@ -84,7 +84,14 @@ from server.state import (
     cancel_task as _cancel_task,
     try_acquire_scan as _try_acquire_scan,
     release_scan as _release_scan,
+    WORKSPACES as _WORKSPACES,
+    SCAN_STATE as _SCAN_STATE,
+    TEMPLATE_STATES as _TEMPLATE_STATES,
+    TASKS as _TASKS,
+    TASK_LOCK as _TASK_LOCK,
+    WS_LOCK as _WS_LOCK,
 )
+from server.services.ai import ai_create_enabled as _ai_create_enabled
 from server.services.detection import (
     serialize_result as _serialize_result,
     cache_stats as _cache_stats,
@@ -99,20 +106,20 @@ from server.services.detection import (
 router = APIRouter()
 
 # --- 本地 AI 自学习记忆（人工校对成对样本：系统留存原始文档 + 用户上传修订文档） ---
-@app.get("/api/ai_memory")
+@router.get("/api/ai_memory")
 def api_ai_memory_get():
     """自学习总览：开关 / 配对状态 / 样本列表 / 学习产出 / 统计。"""
     return ai_memory_payload()
 
 
-@app.post("/api/ai_memory/toggle")
+@router.post("/api/ai_memory/toggle")
 def api_ai_memory_toggle(payload: Dict[str, Any]):
     """自学习总开关。"""
     ai_memory_set_enabled(bool(payload.get("enabled", False)))
     return {"ok": True, "enabled": ai_memory_is_enabled()}
 
 
-@app.post("/api/ai_memory/pair")
+@router.post("/api/ai_memory/pair")
 async def api_ai_memory_pair(files: List[UploadFile] = File(...)):
     """上传人工修改后的修订文档，与系统留存的原始检测文档配对。"""
     if not _ai_create_enabled() or not ai_memory_is_enabled():
@@ -130,7 +137,7 @@ async def api_ai_memory_pair(files: List[UploadFile] = File(...)):
     return {"ok": ok, "message": msg, "source_status": status, "data": ai_memory_payload()}
 
 
-@app.post("/api/ai_memory/diffs")
+@router.post("/api/ai_memory/diffs")
 def api_ai_memory_diffs():
     """比对原始文档与修订文档文本差异，返回差异片段（错误 → 正确）供用户确认。"""
     if not _ai_create_enabled() or not ai_memory_is_enabled():
@@ -139,7 +146,7 @@ def api_ai_memory_diffs():
     return {"ok": ok, "message": msg, "diffs": diffs}
 
 
-@app.post("/api/ai_memory/samples")
+@router.post("/api/ai_memory/samples")
 def api_ai_memory_add_sample(payload: Dict[str, Any]):
     """用户确认后将配对差异片段加入本地记忆样本库（仅存差异文本，释放完整文档）。"""
     if not _ai_create_enabled() or not ai_memory_is_enabled():
@@ -236,7 +243,7 @@ def _mstage(sid: str, stage: str, text: str) -> None:
         _mprogress(sid, stage)
 
 
-@app.post("/api/ai_memory/samples/{sid}/learn")
+@router.post("/api/ai_memory/samples/{sid}/learn")
 def api_ai_memory_learn(sid: str):
     """对成对样本执行本地学习（差异片段 → 词条 + 校验规则）。
 
@@ -307,7 +314,7 @@ def api_ai_memory_learn(sid: str):
     return {"ok": True, "running": True, "message": "学习任务已启动（本地推理过程实时展示）"}
 
 
-@app.post("/api/ai_memory/samples/{sid}/learn/cancel")
+@router.post("/api/ai_memory/samples/{sid}/learn/cancel")
 def api_ai_memory_learn_cancel(sid: str):
     """中止学习任务：下一次 token 回调即中断流式推理，释放本地算力。"""
     if sid not in _MLEARN_STATE:
@@ -320,7 +327,7 @@ def api_ai_memory_learn_cancel(sid: str):
     return {"ok": True, "message": "中止指令已下发，正在停止本地推理…"}
 
 
-@app.get("/api/ai_memory/samples/{sid}/learn/logs")
+@router.get("/api/ai_memory/samples/{sid}/learn/logs")
 def api_ai_memory_learn_logs(sid: str, since: int = 0):
     """轮询本地学习推理过程：阶段日志 + 模型 token 流 + 运行状态 + 实时进度。
 
@@ -348,7 +355,7 @@ def api_ai_memory_learn_logs(sid: str, since: int = 0):
     return {"ok": True, "logs": logs, "offset": total, "state": st}
 
 
-@app.post("/api/ai_memory/samples/{sid}/toggle")
+@router.post("/api/ai_memory/samples/{sid}/toggle")
 def api_ai_memory_sample_toggle(sid: str, payload: Dict[str, Any]):
     """启用 / 禁用样本（禁用的样本不再用于学习）。"""
     import checkers.ai_memory as _m
@@ -361,7 +368,7 @@ def api_ai_memory_sample_toggle(sid: str, payload: Dict[str, Any]):
     return {"ok": True, "data": ai_memory_payload()}
 
 
-@app.delete("/api/ai_memory/samples/{sid}")
+@router.delete("/api/ai_memory/samples/{sid}")
 def api_ai_memory_sample_delete(sid: str):
     """单条删除记忆样本（不影响其已学习产出的规则词条）。"""
     if not ai_memory_sample_delete(sid):
@@ -369,7 +376,7 @@ def api_ai_memory_sample_delete(sid: str):
     return {"ok": True, "data": ai_memory_payload()}
 
 
-@app.post("/api/ai_memory/learned/{lid}/toggle")
+@router.post("/api/ai_memory/learned/{lid}/toggle")
 def api_ai_memory_learned_toggle(lid: str, payload: Dict[str, Any]):
     """启用 / 禁用学习产出的词库条目或校验规则（同步影响检测）。"""
     if not ai_memory_toggle(lid, bool(payload.get("enabled", True))):
@@ -377,7 +384,7 @@ def api_ai_memory_learned_toggle(lid: str, payload: Dict[str, Any]):
     return {"ok": True, "data": ai_memory_payload()}
 
 
-@app.delete("/api/ai_memory/learned/{lid}")
+@router.delete("/api/ai_memory/learned/{lid}")
 def api_ai_memory_learned_delete(lid: str):
     """删除学习产出（从词库 / 自定义规则中移除，不影响其它数据）。"""
     if not ai_memory_delete(lid):
@@ -385,14 +392,14 @@ def api_ai_memory_learned_delete(lid: str):
     return {"ok": True, "data": ai_memory_payload()}
 
 
-@app.post("/api/ai_memory/clear")
+@router.post("/api/ai_memory/clear")
 def api_ai_memory_clear():
     """批量清空本地学习记忆（仅学习生成的数据，不动用户手动导入编写的规则词库）。"""
     removed = ai_memory_clear()
     return {"ok": True, "removed": removed, "data": ai_memory_payload()}
 
 
-@app.get("/api/ai_memory/export")
+@router.get("/api/ai_memory/export")
 def api_ai_memory_export(format: str = "txt", kind: str = "wordbanks"):
     """导出自学习产出的词库/规则文件（csv / txt，用于备份迁移）。"""
     from fastapi.responses import Response

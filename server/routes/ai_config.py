@@ -63,7 +63,7 @@ from checkers.ai_memory import (
     add_sample as ai_memory_add_sample,
     export_learned as ai_memory_export,
 )
-from report.report_builder import build_report, default_report_name
+from reporting.report_builder import build_report, default_report_name
 from checkers.valuation.valuation_api import router as valuation_router
 from checkers.rag_store import (
     kb_status as rag_kb_status, index_docs as rag_index_docs,
@@ -84,6 +84,12 @@ from server.state import (
     cancel_task as _cancel_task,
     try_acquire_scan as _try_acquire_scan,
     release_scan as _release_scan,
+    WORKSPACES as _WORKSPACES,
+    SCAN_STATE as _SCAN_STATE,
+    TEMPLATE_STATES as _TEMPLATE_STATES,
+    TASKS as _TASKS,
+    TASK_LOCK as _TASK_LOCK,
+    WS_LOCK as _WS_LOCK,
 )
 from server.services.detection import (
     serialize_result as _serialize_result,
@@ -100,19 +106,19 @@ router = APIRouter()
 
 # AI 智能核验（可选：本地 AI / 联网 AI）
 # ---------------------------------------------------------------------------
-@app.get("/api/ai/status")
+@router.get("/api/ai/status")
 def api_ai_status():
     return {"ai": (load_settings().get("ai") or {})}
 
 
-@app.get("/api/ai/skills")
+@router.get("/api/ai/skills")
 def api_ai_skills():
     """返回内置专项技能列表（前端技能开关与自定义管理的唯一来源）。"""
     from checkers.ai_checker import BUILTIN_SKILLS
     return {"builtin": BUILTIN_SKILLS}
 
 
-@app.get("/api/ai/models")
+@router.get("/api/ai/models")
 def api_ai_models(base_url: Optional[str] = None):
     """获取本地 Ollama 已安装模型列表（供前端下拉选择；Ollama 未运行返回空）。
     可通过 ?base_url=... 指定临时地址（不写入 settings），便于切换模型时即时探测。"""
@@ -131,7 +137,7 @@ def api_ai_models(base_url: Optional[str] = None):
         return {"ok": False, "models": [], "base_url": base, "message": f"无法连接本地 AI 服务：{exc}"}
 
 
-@app.post("/api/ai/test")
+@router.post("/api/ai/test")
 def api_ai_test(payload: Dict[str, Any]):
     """测试 AI 连接（mode/base_url/api_key/model 传入即覆盖设置）。"""
     cfg = {**(load_settings().get("ai") or {}), **{k: v for k, v in payload.items()
@@ -141,12 +147,12 @@ def api_ai_test(payload: Dict[str, Any]):
 
 
 # --- 参考资料（标准/词汇/规范，AI 核验时自动携带） ---
-@app.get("/api/ai/refs")
+@router.get("/api/ai/refs")
 def api_ai_refs():
     return {"refs": list_refs()}
 
 
-@app.post("/api/ai/refs/upload")
+@router.post("/api/ai/refs/upload")
 async def api_ai_refs_upload(files: List[UploadFile] = File(...)):
     """上传参考资料（multipart files，支持 .txt/.md/.csv/.docx/.pdf）。"""
     if not files:
@@ -166,35 +172,35 @@ async def api_ai_refs_upload(files: List[UploadFile] = File(...)):
             "refs": list_refs()}
 
 
-@app.post("/api/ai/refs/toggle")
+@router.post("/api/ai/refs/toggle")
 def api_ai_refs_toggle(payload: Dict[str, Any]):
     name = str(payload.get("name") or "")
     ok = set_ref_enabled(name, bool(payload.get("enabled", True)))
     return {"ok": ok, "refs": list_refs()}
 
 
-@app.post("/api/ai/refs/delete")
+@router.post("/api/ai/refs/delete")
 def api_ai_refs_delete(payload: Dict[str, Any]):
     name = str(payload.get("name") or "")
     existed = delete_ref(name)
     return {"ok": existed, "refs": list_refs()}
 
 
-@app.get("/api/ai/logs")
+@router.get("/api/ai/logs")
 def api_ai_logs(limit: int = 200, offset: int = 0):
     """AI 活动日志（核验 / 生成 / 测试连接 / 自学习）。"""
     items = ai_activity.get_logs(limit=max(1, int(limit)), offset=max(0, int(offset)))
     return {"ok": True, "logs": items, "total": len(items)}
 
 
-@app.post("/api/ai/logs/clear")
+@router.post("/api/ai/logs/clear")
 def api_ai_logs_clear():
     n = ai_activity.clear_logs()
     return {"ok": True, "cleared": n}
 
 
 # --- 通用操作日志（规则/词库等后台保存操作） ---
-@app.get("/api/activity/logs")
+@router.get("/api/activity/logs")
 def api_activity_logs(module: str = "", limit: int = 200, offset: int = 0):
     """操作记录（修改项 / 操作人 / 时间）。module 可过滤，如 rules / wordbank。"""
     items = rule_activity.get_logs(
@@ -203,7 +209,7 @@ def api_activity_logs(module: str = "", limit: int = 200, offset: int = 0):
     return {"ok": True, "logs": items, "total": len(items)}
 
 
-@app.post("/api/activity/logs")
+@router.post("/api/activity/logs")
 def api_activity_log_create(payload: Dict[str, Any]):
     """写入一条操作记录（修改项 / 操作人 / 时间）。"""
     rule_activity.log_activity(
@@ -215,7 +221,7 @@ def api_activity_log_create(payload: Dict[str, Any]):
     return {"ok": True}
 
 
-@app.post("/api/activity/logs/clear")
+@router.post("/api/activity/logs/clear")
 def api_activity_logs_clear(payload: Dict[str, Any]):
     module = (payload or {}).get("module") or None
     n = rule_activity.clear_logs(module=module)

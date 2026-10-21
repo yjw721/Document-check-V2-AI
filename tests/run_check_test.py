@@ -22,7 +22,7 @@ sys.path.insert(0, _ROOT)
 from checkers.base import STATUS_UNREADABLE  # noqa: E402
 from checkers.scanner import check_single, collect_folder, summarize  # noqa: E402
 from config.config_manager import load_rules, severity_label  # noqa: E402
-from report.report_builder import build_report  # noqa: E402
+from reporting.report_builder import build_report  # noqa: E402
 
 SAMPLE_DIR = os.path.join(_ROOT, "tests", "samples")
 OUT_DIR = os.path.join(_ROOT, "tests", "out")

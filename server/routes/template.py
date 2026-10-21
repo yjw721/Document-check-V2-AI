@@ -63,7 +63,7 @@ from checkers.ai_memory import (
     add_sample as ai_memory_add_sample,
     export_learned as ai_memory_export,
 )
-from report.report_builder import build_report, default_report_name
+from reporting.report_builder import build_report, default_report_name
 from checkers.valuation.valuation_api import router as valuation_router
 from checkers.rag_store import (
     kb_status as rag_kb_status, index_docs as rag_index_docs,
@@ -84,6 +84,12 @@ from server.state import (
     cancel_task as _cancel_task,
     try_acquire_scan as _try_acquire_scan,
     release_scan as _release_scan,
+    WORKSPACES as _WORKSPACES,
+    SCAN_STATE as _SCAN_STATE,
+    TEMPLATE_STATES as _TEMPLATE_STATES,
+    TASKS as _TASKS,
+    TASK_LOCK as _TASK_LOCK,
+    WS_LOCK as _WS_LOCK,
 )
 from server.services.detection import (
     serialize_result as _serialize_result,
@@ -100,7 +106,7 @@ router = APIRouter()
 
 # 范本导入生成规则
 # ---------------------------------------------------------------------------
-@app.post("/api/template/upload")
+@router.post("/api/template/upload")
 async def api_template_upload(files: List[UploadFile] = File(...), category: str = Form("general"),
                               ws: str = Header("", alias="X-Workspace")):
     """上传外部基准文件（.docx/.pdf/.txt/.csv/.scel，批量）并解析生成规则 / 词库草案。
@@ -126,7 +132,7 @@ async def api_template_upload(files: List[UploadFile] = File(...), category: str
     return draft
 
 
-@app.get("/api/template/draft")
+@router.get("/api/template/draft")
 def api_template_draft(ws: str = Header("", alias="X-Workspace")):
     """获取当前范本解析草案（无草案时返回空结构）。"""
     p = _template_state(ws).get("parser")
@@ -135,7 +141,7 @@ def api_template_draft(ws: str = Header("", alias="X-Workspace")):
     return p.draft()
 
 
-@app.post("/api/template/select")
+@router.post("/api/template/select")
 def api_template_select(payload: Dict[str, Any], ws: str = Header("", alias="X-Workspace")):
     """更新草案选中状态（rule_ids / entry_ids 未列出的项视为取消选择）。"""
     p = _template_state(ws).get("parser")
@@ -145,7 +151,7 @@ def api_template_select(payload: Dict[str, Any], ws: str = Header("", alias="X-W
     return {"ok": True}
 
 
-@app.post("/api/template/import")
+@router.post("/api/template/import")
 def api_template_import(payload: Dict[str, Any], ws: str = Header("", alias="X-Workspace")):
     """选择性确认导入：仅追加选中项到自定义规则 / 自定义词库，绝不覆盖原有配置。"""
     p = _template_state(ws).get("parser")
@@ -200,7 +206,7 @@ def api_template_import(payload: Dict[str, Any], ws: str = Header("", alias="X-W
             "rejected": rejected}
 
 
-@app.post("/api/template/clear")
+@router.post("/api/template/clear")
 def api_template_clear(ws: str = Header("", alias="X-Workspace")):
     """清空当前范本解析草案。"""
     _template_state(ws)["parser"] = None

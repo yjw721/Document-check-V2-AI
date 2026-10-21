@@ -63,7 +63,7 @@ from checkers.ai_memory import (
     add_sample as ai_memory_add_sample,
     export_learned as ai_memory_export,
 )
-from report.report_builder import build_report, default_report_name
+from reporting.report_builder import build_report, default_report_name
 from checkers.valuation.valuation_api import router as valuation_router
 from checkers.rag_store import (
     kb_status as rag_kb_status, index_docs as rag_index_docs,
@@ -84,6 +84,12 @@ from server.state import (
     cancel_task as _cancel_task,
     try_acquire_scan as _try_acquire_scan,
     release_scan as _release_scan,
+    WORKSPACES as _WORKSPACES,
+    SCAN_STATE as _SCAN_STATE,
+    TEMPLATE_STATES as _TEMPLATE_STATES,
+    TASKS as _TASKS,
+    TASK_LOCK as _TASK_LOCK,
+    WS_LOCK as _WS_LOCK,
 )
 from server.services.detection import (
     serialize_result as _serialize_result,
@@ -100,12 +106,12 @@ router = APIRouter()
 
 # 本地知识库（RAG 检索问答）
 # ---------------------------------------------------------------------------
-@app.get("/api/rag/status")
+@router.get("/api/rag/status")
 def api_rag_status():
     return rag_kb_status()
 
 
-@app.post("/api/rag/upload")
+@router.post("/api/rag/upload")
 async def api_rag_upload(files: List[UploadFile] = File(...)):
     """上传文档并入知识库索引（支持 .docx / .pdf / .txt / .md / .csv / .xlsx）。"""
     items: List[tuple] = []
@@ -126,7 +132,7 @@ async def api_rag_upload(files: List[UploadFile] = File(...)):
     return {"ok": True if added else False, "added": added, "docs": docs, "errors": errors}
 
 
-@app.post("/api/rag/ask")
+@router.post("/api/rag/ask")
 def api_rag_ask(payload: Dict[str, Any]):
     """基于本地知识库检索并生成回答（返回答案与来源片段）。"""
     question = str(payload.get("question") or "").strip()
@@ -143,7 +149,7 @@ def api_rag_ask(payload: Dict[str, Any]):
     return {"ok": True, **res}
 
 
-@app.post("/api/rag/delete")
+@router.post("/api/rag/delete")
 def api_rag_delete(payload: Dict[str, Any]):
     ids = payload.get("ids") or []
     if not isinstance(ids, list) or not ids:
@@ -152,13 +158,13 @@ def api_rag_delete(payload: Dict[str, Any]):
     return {"ok": True, "removed": removed, "names": names}
 
 
-@app.post("/api/rag/clear")
+@router.post("/api/rag/clear")
 def api_rag_clear():
     rag_clear()
     return {"ok": True}
 
 
-@app.get("/api/rag/file/{doc_id}")
+@router.get("/api/rag/file/{doc_id}")
 def api_rag_file(doc_id: str):
     """下载知识库中的原始文档（来源跳转）。"""
     p = rag_doc_file(doc_id)

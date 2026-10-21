@@ -39,16 +39,6 @@ _SCAN_GATE_LOCK = threading.Lock()
 _SCAN_RUNNING = False
 
 
-# 对外只读引用：路由模块统一 from server.state import ...，
-# 指向的仍是同一批可变容器，避免跨模块重新赋值导致状态不同步。
-WORKSPACES = _WORKSPACES
-SCAN_STATE = _SCAN_STATE
-TEMPLATE_STATES = _TEMPLATE_STATES
-TASKS = _TASKS
-TASK_LOCK = _TASK_LOCK
-WS_LOCK = _WS_LOCK
-
-
 def workspace(wsid: str = "") -> Dict[str, Any]:
     """按工作区 id 取（或创建）内存态；空 id 归入 default 工作区。"""
     wsid = (wsid or "default").strip() or "default"
@@ -241,3 +231,12 @@ def cancel_task(tid: str) -> bool:
                 except OSError:
                     pass
     return True
+
+# 对外只读引用：路由模块统一 `from server.state import ...`，
+# 指向的仍是同一批可变容器，避免跨模块重新赋值导致状态不同步。
+WORKSPACES = _WORKSPACES
+SCAN_STATE = _SCAN_STATE
+TEMPLATE_STATES = _TEMPLATE_STATES
+TASKS = _TASKS
+TASK_LOCK = _TASK_LOCK
+WS_LOCK = _WS_LOCK

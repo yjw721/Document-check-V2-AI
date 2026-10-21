@@ -63,7 +63,7 @@ from checkers.ai_memory import (
     add_sample as ai_memory_add_sample,
     export_learned as ai_memory_export,
 )
-from report.report_builder import build_report, default_report_name
+from reporting.report_builder import build_report, default_report_name
 from checkers.valuation.valuation_api import router as valuation_router
 from checkers.rag_store import (
     kb_status as rag_kb_status, index_docs as rag_index_docs,
@@ -84,6 +84,12 @@ from server.state import (
     cancel_task as _cancel_task,
     try_acquire_scan as _try_acquire_scan,
     release_scan as _release_scan,
+    WORKSPACES as _WORKSPACES,
+    SCAN_STATE as _SCAN_STATE,
+    TEMPLATE_STATES as _TEMPLATE_STATES,
+    TASKS as _TASKS,
+    TASK_LOCK as _TASK_LOCK,
+    WS_LOCK as _WS_LOCK,
 )
 from server.services.detection import (
     serialize_result as _serialize_result,
@@ -110,12 +116,12 @@ def _rule_titles() -> Dict[str, str]:
     return out
 
 
-@app.get("/api/dictionaries")
+@router.get("/api/dictionaries")
 def api_dictionaries():
     return {"files": list_dictionaries(_rule_titles())}
 
 
-@app.get("/api/dictionaries/{name}")
+@router.get("/api/dictionaries/{name}")
 def api_dictionary_get(name: str):
     content = read_dictionary(name)
     if content is None:
@@ -123,7 +129,7 @@ def api_dictionary_get(name: str):
     return {"name": name, "content": content}
 
 
-@app.post("/api/dictionaries/{name}")
+@router.post("/api/dictionaries/{name}")
 def api_dictionary_save(name: str, payload: Dict[str, Any]):
     content = payload.get("content")
     if not isinstance(content, str):
@@ -133,12 +139,12 @@ def api_dictionary_save(name: str, payload: Dict[str, Any]):
     return {"ok": True}
 
 
-@app.get("/api/custom_rules")
+@router.get("/api/custom_rules")
 def api_custom_rules():
     return load_custom_rules()
 
 
-@app.post("/api/custom_rules")
+@router.post("/api/custom_rules")
 def api_save_custom_rules(payload: Dict[str, Any]):
     """保存自定义规则：入库前置校验（所有渠道统一），无效规则过滤并记录日志。"""
     cleaned, dropped = rule_filter_rules_payload(payload, channel="manual_save")
@@ -147,12 +153,12 @@ def api_save_custom_rules(payload: Dict[str, Any]):
     return {"ok": True, "filtered_rules": len(dropped), "rejected": dropped}
 
 
-@app.get("/api/wordbanks")
+@router.get("/api/wordbanks")
 def api_wordbanks():
     return load_wordbanks()
 
 
-@app.post("/api/wordbanks")
+@router.post("/api/wordbanks")
 def api_save_wordbanks(payload: Dict[str, Any]):
     """保存自定义词库：入库前置校验，无效词条过滤并记录日志。"""
     cleaned, dropped = rule_filter_entries_payload(payload, channel="manual_save")
@@ -161,7 +167,7 @@ def api_save_wordbanks(payload: Dict[str, Any]):
     return {"ok": True, "filtered_entries": len(dropped), "rejected": dropped}
 
 
-@app.post("/api/wordbanks/import")
+@router.post("/api/wordbanks/import")
 def api_wordbanks_import(payload: Dict[str, Any]):
     """批量解析词条文本（CSV/TXT），返回解析后的 Entry 列表。"""
     raw = payload.get("text", "")

@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from checkers.base import Issue, FileResult, STATUS_ISSUE  # noqa: E402
 from checkers import ai_checker  # noqa: E402
-from report.report_builder import build_report  # noqa: E402
+from reporting.report_builder import build_report  # noqa: E402
 from docx import Document  # noqa: E402
 
 ok = fail = 0

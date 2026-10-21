@@ -63,7 +63,7 @@ from checkers.ai_memory import (
     add_sample as ai_memory_add_sample,
     export_learned as ai_memory_export,
 )
-from report.report_builder import build_report, default_report_name
+from reporting.report_builder import build_report, default_report_name
 from checkers.valuation.valuation_api import router as valuation_router
 from checkers.rag_store import (
     kb_status as rag_kb_status, index_docs as rag_index_docs,
@@ -84,6 +84,12 @@ from server.state import (
     cancel_task as _cancel_task,
     try_acquire_scan as _try_acquire_scan,
     release_scan as _release_scan,
+    WORKSPACES as _WORKSPACES,
+    SCAN_STATE as _SCAN_STATE,
+    TEMPLATE_STATES as _TEMPLATE_STATES,
+    TASKS as _TASKS,
+    TASK_LOCK as _TASK_LOCK,
+    WS_LOCK as _WS_LOCK,
 )
 from server.services.detection import (
     serialize_result as _serialize_result,
@@ -100,19 +106,19 @@ router = APIRouter()
 
 # 设置
 # ---------------------------------------------------------------------------
-@app.get("/api/settings")
+@router.get("/api/settings")
 def api_settings():
     return load_settings()
 
 
-@app.post("/api/settings")
+@router.post("/api/settings")
 def api_save_settings(payload: Dict[str, Any]):
     if not save_settings(payload):
         raise HTTPException(500, "设置保存失败")
     return {"ok": True}
 
 
-@app.post("/api/settings/restore")
+@router.post("/api/settings/restore")
 def api_restore_settings():
     return restore_defaults()
 

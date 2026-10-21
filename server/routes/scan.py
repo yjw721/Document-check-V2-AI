@@ -63,7 +63,7 @@ from checkers.ai_memory import (
     add_sample as ai_memory_add_sample,
     export_learned as ai_memory_export,
 )
-from report.report_builder import build_report, default_report_name
+from reporting.report_builder import build_report, default_report_name
 from checkers.valuation.valuation_api import router as valuation_router
 from checkers.rag_store import (
     kb_status as rag_kb_status, index_docs as rag_index_docs,
@@ -84,6 +84,12 @@ from server.state import (
     cancel_task as _cancel_task,
     try_acquire_scan as _try_acquire_scan,
     release_scan as _release_scan,
+    WORKSPACES as _WORKSPACES,
+    SCAN_STATE as _SCAN_STATE,
+    TEMPLATE_STATES as _TEMPLATE_STATES,
+    TASKS as _TASKS,
+    TASK_LOCK as _TASK_LOCK,
+    WS_LOCK as _WS_LOCK,
 )
 from server.services.detection import (
     serialize_result as _serialize_result,
@@ -100,7 +106,7 @@ router = APIRouter()
 
 # 规则与词库一键扫描管理（扫描分类 / 备份导出 / 清理）
 # ---------------------------------------------------------------------------
-@app.post("/api/scan/start")
+@router.post("/api/scan/start")
 def api_scan_start():
     """启动规则词库后台扫描任务（进度经 /api/task/{tid} 轮询）。"""
     if not _try_acquire_scan():
@@ -138,7 +144,7 @@ def _run_scan_task(tid: str) -> None:
         _release_scan()
 
 
-@app.get("/api/scan/last")
+@router.get("/api/scan/last")
 def api_scan_last():
     """最近一次扫描结果（刷新页面后仍可查看）。"""
     return {"ok": True, "result": _SCAN_STATE.get("last")}
@@ -154,7 +160,7 @@ def _scan_items_by_ids(ids: List[str]) -> Tuple[List[Dict[str, Any]], Dict[str, 
     return items, result
 
 
-@app.post("/api/scan/export")
+@router.post("/api/scan/export")
 def api_scan_export(payload: Dict[str, Any]):
     """导出待清理数据备份（txt / csv）；ids 为空时导出全部无效 + 重复非保留项。"""
     from fastapi.responses import Response
@@ -178,7 +184,7 @@ def api_scan_export(payload: Dict[str, Any]):
     )
 
 
-@app.post("/api/scan/clean")
+@router.post("/api/scan/clean")
 def api_scan_clean(payload: Dict[str, Any]):
     """按 item_id 清理无效 / 重复条目；ids 为空时清理全部待清理项。
 

@@ -63,7 +63,7 @@ from checkers.ai_memory import (
     add_sample as ai_memory_add_sample,
     export_learned as ai_memory_export,
 )
-from report.report_builder import build_report, default_report_name
+from reporting.report_builder import build_report, default_report_name
 from checkers.valuation.valuation_api import router as valuation_router
 from checkers.rag_store import (
     kb_status as rag_kb_status, index_docs as rag_index_docs,
@@ -84,6 +84,12 @@ from server.state import (
     cancel_task as _cancel_task,
     try_acquire_scan as _try_acquire_scan,
     release_scan as _release_scan,
+    WORKSPACES as _WORKSPACES,
+    SCAN_STATE as _SCAN_STATE,
+    TEMPLATE_STATES as _TEMPLATE_STATES,
+    TASKS as _TASKS,
+    TASK_LOCK as _TASK_LOCK,
+    WS_LOCK as _WS_LOCK,
 )
 from server.services.detection import (
     serialize_result as _serialize_result,
@@ -100,7 +106,7 @@ router = APIRouter()
 
 # 概览 / 状态
 # ---------------------------------------------------------------------------
-@app.get("/api/overview")
+@router.get("/api/overview")
 def api_overview(ws: str = Header("", alias="X-Workspace")):
     state = _workspace(ws)
     summary = summarize(state["results"])
@@ -138,12 +144,12 @@ def api_overview(ws: str = Header("", alias="X-Workspace")):
     }
 
 
-@app.get("/api/files")
+@router.get("/api/files")
 def api_files(ws: str = Header("", alias="X-Workspace")):
     return {"results": [_serialize_result(r) for r in _workspace(ws)["results"]]}
 
 
-@app.get("/api/issues")
+@router.get("/api/issues")
 def api_issues(ws: str = Header("", alias="X-Workspace")):
     out = []
     results = _workspace(ws)["results"]
@@ -156,7 +162,7 @@ def api_issues(ws: str = Header("", alias="X-Workspace")):
     return {"issues": out}
 
 
-@app.post("/api/issue_state")
+@router.post("/api/issue_state")
 def api_issue_state(payload: Dict[str, Any], ws: str = Header("", alias="X-Workspace")):
     fi, ii, stt = payload.get("file_index"), payload.get("issue_index"), payload.get("state")
     try:

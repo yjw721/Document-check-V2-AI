@@ -109,9 +109,15 @@ npm run build       # 产物自动输出 dist/，复制到 ../static/ 即可部�
 
 ```
 文档核验AI/
-├── app.py                      # FastAPI 主程序（API + 异步检测任务 + 静态服务）
+├── app.py                      # 启动入口（转发到 server.main，保持历史启动方式不变）
 ├── 启动工具.bat                # Windows 一键离线启动脚本
 ├── requirements.txt            # 依赖清单
+├── server/                     # 后端分层包
+│   ├── main.py                 # FastAPI 装配（CORS / 路由注册 / 静态资源）
+│   ├── state.py                # 路径常量 + 工作区 / 扫描 / 任务内存态 + 并发闸门
+│   ├── security.py             # 访问口令门禁中间件 + /api/security/ping
+│   ├── services/               # 业务执行层（检测执行 / AI 核验 / 缓存 / 序列化）
+│   └── routes/                 # 按业务域拆分的 APIRouter 模块
 ├── config/
 │   ├── rules.json              # ★ 内置标准规则配置（启停/级别/建议）
 │   ├── rules.default.json      # 规则默认基准（恢复默认用）
@@ -136,10 +142,12 @@ npm run build       # 产物自动输出 dist/，复制到 ../static/ 即可部�
 │   ├── rag_store.py            # ★ 本地知识库 RAG（切片 / BM25 / 向量 / 问答）
 │   └── ai_memory.py            # ★ 本地AI自学习记忆（离线学习引擎）
 ├── dictionaries/               # 内置文本词库（*.txt，UTF-8）
-├── report/report_builder.py    # Word 检测报告生成
+├── reporting/                  # 报告生成代码（注意：与运行时输出目录 reports/ 区分）
+│   └── report_builder.py       # Word 检测报告生成
 ├── static/                     # React 构建产物（部署态前端）
 ├── web/                        # React 源码（Vite + TypeScript + Tailwind）
-└── tests/                      # 端到端自检 / 静态冒烟
+├── tools/                       # 开发辅助脚本（浏览器巡检 / 性能探针）
+└── tests/                      # 回归测试（tests/regression/）
 ```
 
 ---
@@ -376,7 +384,7 @@ EXCEL  命中 13/13，全部命中
 - **新增后端接口**：`app.py` 中 FastAPI 端点 + `web/src/lib/api.ts` 客户端 + `types.ts` 类型。
 - **异步检测任务**：`_run_detection` / `_run_ai_verify` + `_TASKS` 注册表；
   进度钩子签名 `(percent, stage, log) -> bool`（返回 False 即取消）。
-- **报告模板**：`report/report_builder.py`，纯本地 OpenXML 操作。
+- **报告模板**：`reporting/report_builder.py`，纯本地 OpenXML 操作。
 
 ---
 

@@ -63,7 +63,7 @@ from checkers.ai_memory import (
     add_sample as ai_memory_add_sample,
     export_learned as ai_memory_export,
 )
-from report.report_builder import build_report, default_report_name
+from reporting.report_builder import build_report, default_report_name
 from checkers.valuation.valuation_api import router as valuation_router
 from checkers.rag_store import (
     kb_status as rag_kb_status, index_docs as rag_index_docs,
@@ -84,6 +84,12 @@ from server.state import (
     cancel_task as _cancel_task,
     try_acquire_scan as _try_acquire_scan,
     release_scan as _release_scan,
+    WORKSPACES as _WORKSPACES,
+    SCAN_STATE as _SCAN_STATE,
+    TEMPLATE_STATES as _TEMPLATE_STATES,
+    TASKS as _TASKS,
+    TASK_LOCK as _TASK_LOCK,
+    WS_LOCK as _WS_LOCK,
 )
 from server.services.detection import (
     serialize_result as _serialize_result,
@@ -100,7 +106,7 @@ router = APIRouter()
 
 # 导入与检测
 # ---------------------------------------------------------------------------
-@app.post("/api/upload")
+@router.post("/api/upload")
 async def api_upload(files: List[UploadFile] = File(...),
                      ws: str = Header("", alias="X-Workspace"),
                      ai_enabled: Optional[str] = Form(None),
@@ -132,7 +138,7 @@ async def api_upload(files: List[UploadFile] = File(...),
     return {"ok": True, "task_id": tid}
 
 
-@app.post("/api/scan_folder")
+@router.post("/api/scan_folder")
 def api_scan_folder(payload: Dict[str, Any], ws: str = Header("", alias="X-Workspace")):
     if not _try_acquire_scan():
         raise HTTPException(409, "已有检测任务正在进行，请稍后再试")
@@ -167,7 +173,7 @@ def _task_ai_over(enabled, scope) -> Optional[Dict[str, Any]]:
     return out or None
 
 
-@app.get("/api/task/{tid}")
+@router.get("/api/task/{tid}")
 def api_task(tid: str):
     """查询核验任务状态：进度 / 阶段 / 思考日志（轮询用）。"""
     snap = _task_snapshot(tid)
@@ -176,7 +182,7 @@ def api_task(tid: str):
     return snap
 
 
-@app.post("/api/task/{tid}/cancel")
+@router.post("/api/task/{tid}/cancel")
 def api_task_cancel(tid: str):
     """取消核验任务：终止检测、清空该任务的中间缓存文件。"""
     if not _cancel_task(tid):
@@ -184,7 +190,7 @@ def api_task_cancel(tid: str):
     return {"ok": True}
 
 
-@app.post("/api/clear_data")
+@router.post("/api/clear_data")
 def api_clear_data(ws: str = Header("", alias="X-Workspace")):
     state = _workspace(ws)
     state["results"] = []
@@ -193,7 +199,7 @@ def api_clear_data(ws: str = Header("", alias="X-Workspace")):
     return {"ok": True}
 
 
-@app.post("/api/clear_cache")
+@router.post("/api/clear_cache")
 def api_clear_cache():
     return _clear_cache()
 
