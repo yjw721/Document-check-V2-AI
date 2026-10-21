@@ -884,10 +884,17 @@ export interface KbDoc {
   chars: number;
   chunks: number;
   added_at: string;
+  folder?: string;
+  path?: string;
+  diag?: Record<string, unknown>;
 }
 export interface KbConfig {
   chunk_size: number;
   chunk_overlap: number;
+  vector_backend?: string;
+  collection?: string;
+  ocr_enabled?: boolean;
+  ocr_engine?: string;
 }
 export interface KbStatus {
   ok: boolean;
@@ -900,6 +907,11 @@ export interface KbStatus {
   embed_dim?: number;
   updated_at: string;
   config?: KbConfig;
+  /* 向量库后端自检 */
+  store?: { backend?: string; vectors?: number; dim?: number; [k: string]: unknown };
+  store_error?: string;
+  backends?: KbBackendInfo[];
+  parsers?: KbParserStatus;
 }
 export interface KbSource {
   file: string;
@@ -910,6 +922,14 @@ export interface KbSource {
   score: number;
   doc_id: string;
 }
+export interface KbAudit {
+  grounded?: boolean;
+  refused?: boolean;
+  citations?: string[];
+  unknown?: string[];
+  confidence?: number;
+  warnings?: string[];
+}
 export interface KbAskResp {
   ok: boolean;
   answer: string;
@@ -919,12 +939,88 @@ export interface KbAskResp {
   mode?: string;
   elapsed: number;
   error?: string;
+  audit?: KbAudit;
 }
 export interface KbUploadResp {
   ok: boolean;
   added: number;
-  docs: { id: string; name: string; chars: number; chunks: number; reused?: boolean }[];
+  docs: {
+    id: string;
+    name: string;
+    chars: number;
+    chunks: number;
+    reused?: boolean;
+    folder?: string;
+    diag?: Record<string, unknown>;
+  }[];
   errors: string[];
+}
+
+/* 树形目录 */
+export interface KbTreeNode {
+  id: string;
+  name: string;
+  path: string;
+  folders: KbTreeNode[];
+  docs: KbDoc[];
+  folder_count?: number;
+  doc_count?: number;
+  total_docs?: number;
+}
+export interface KbFolder {
+  id: string;
+  name: string;
+  parent: string;
+  path: string;
+  docs: number;
+}
+
+/* 权限 */
+export interface KbCapDef {
+  id: string;
+  label: string;
+  desc: string;
+}
+export interface KbRoleDef {
+  id: string;
+  label: string;
+  desc: string;
+  caps: Record<string, boolean>;
+}
+export interface KbPermissions {
+  ok: boolean;
+  role: string;
+  role_label: string;
+  caps: Record<string, boolean>;
+  roles: KbRoleDef[];
+  cap_defs: KbCapDef[];
+}
+
+/* 解析能力自检 */
+export interface KbParserInfo {
+  ext: string;
+  label: string;
+  available: boolean;
+  note: string;
+}
+export interface KbOcrInfo {
+  available: boolean;
+  engine: string;
+  error?: string;
+  engines: { id: string; installed: boolean }[];
+}
+export interface KbParserStatus {
+  ok: boolean;
+  formats: KbParserInfo[];
+  ocr: KbOcrInfo;
+  supported: string[];
+}
+export interface KbBackendInfo {
+  id: string;
+  label: string;
+  note: string;
+  available: boolean;
+  error?: string;
 }
 /* 检索诊断：仅检索、不生成，返回各路得分与融合名次 */
 export interface KbSearchHit {

@@ -8,7 +8,8 @@
     4. 核验联动：逐片段检索并回传「知识依据」（Issue.evidence）
     5. 检索诊断 / 配置读写 / 删除 / 清空
 
-注意：测试会把 config/knowledge/ 临时整体移开，结束后原样恢复。
+隔离策略：把引擎的路径常量临时指向项目内的 ``.tmp_ragtest_kb/``，
+全程不触碰真实的 config/knowledge/（避免污染或丢失用户已入库的向量）。
 """
 import os
 import shutil
@@ -33,8 +34,14 @@ from checkers import rag_store as rs          # noqa: E402
 from checkers.rag import engine as eng        # noqa: E402
 from checkers.rag import text as rt           # noqa: E402
 
-KB_DIR = eng.KB_DIR
-BACKUP = KB_DIR + ".bak_ragtest"
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+KB_DIR = os.path.join(ROOT, ".tmp_ragtest_kb")
+
+# 路径隔离：所有落盘操作重定向到临时目录
+_orig_paths = (eng.KB_DIR, eng.KB_PATH, eng.FILES_DIR)
+eng.KB_DIR = KB_DIR
+eng.KB_PATH = os.path.join(KB_DIR, "knowledge.json")
+eng.FILES_DIR = os.path.join(KB_DIR, "files")
 
 # 离线：屏蔽 Ollama 嵌入调用，保证测试不依赖外部服务
 _embed_calls = {"n": 0}
@@ -81,11 +88,7 @@ TXT = """第一章 总则
 
 def main():
     global OK, FAIL
-    had_backup = os.path.isdir(KB_DIR)
-    if os.path.isdir(BACKUP):
-        shutil.rmtree(BACKUP)
-    if had_backup:
-        os.rename(KB_DIR, BACKUP)
+    shutil.rmtree(KB_DIR, ignore_errors=True)
     eng.invalidate()
     try:
         os.makedirs(eng.FILES_DIR, exist_ok=True)
@@ -203,8 +206,7 @@ def main():
         chk("清空后无文档", st3["total_chunks"] == 0 and not st3["docs"])
     finally:
         shutil.rmtree(KB_DIR, ignore_errors=True)
-        if had_backup:
-            os.rename(BACKUP, KB_DIR)
+        eng.KB_DIR, eng.KB_PATH, eng.FILES_DIR = _orig_paths
         eng.invalidate()
         eng.embed_batch = _orig_embed
 

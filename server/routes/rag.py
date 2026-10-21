@@ -14,7 +14,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, File, Form, UploadFile, HTTPException, Request, Header
+from fastapi import (APIRouter, Depends, File, Form, UploadFile, HTTPException,
+                     Request, Header)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -72,7 +73,16 @@ from checkers.rag_store import (
     search_debug as rag_search, rebuild_index as rag_rebuild,
     kb_config as rag_kb_config, save_kb_config as rag_save_kb_config,
     retrieve_for_verify as rag_verify_retrieve, pack_hits as rag_pack,
+    reindex_doc as rag_reindex_doc,
+    kb_tree as rag_tree, list_folders as rag_folders,
+    create_folder as rag_folder_create, rename_folder as rag_folder_rename,
+    delete_folder as rag_folder_delete, move_folder as rag_folder_move,
+    move_docs as rag_docs_move, folder_doc_ids as rag_folder_docs,
+    kb_permissions as rag_permissions,
+    save_kb_permissions as rag_save_permissions,
+    parser_status as rag_parser_status,
 )
+from checkers.rag.permissions import require as _require_cap
 
 
 from server import state
@@ -109,14 +119,20 @@ router = APIRouter()
 
 # 本地知识库（RAG 检索问答）
 # ---------------------------------------------------------------------------
-@router.get("/api/rag/status")
+@router.get("/api/rag/status", dependencies=[_require_cap("kb.view")])
 def api_rag_status():
     return rag_kb_status()
 
 
-@router.post("/api/rag/upload")
-async def api_rag_upload(files: List[UploadFile] = File(...)):
-    """上传文档并入知识库索引（支持 .docx / .pdf / .txt / .md / .csv / .xlsx）。"""
+@router.post("/api/rag/upload", dependencies=[_require_cap("kb.upload")])
+async def api_rag_upload(files: List[UploadFile] = File(...),
+                         folder: str = Form("")):
+    """批量上传文档并入知识库索引。
+
+    支持 .docx / .doc / .pdf / .txt / .md / .csv / .xlsx 与
+    .png / .jpg / .jpeg / .bmp / .tif / .tiff / .webp（走 OCR）。
+    ``folder`` 指定归入的目录 id，留空为根目录。
+    """
     items: List[tuple] = []
     for uf in files:
         name = os.path.basename(uf.filename or "file")
@@ -129,16 +145,17 @@ async def api_rag_upload(files: List[UploadFile] = File(...)):
         items.append((name, content))
     if not items:
         raise HTTPException(400, "没有可上传的合法文件")
-    added, docs, errors = rag_index_docs(items)
+    added, docs, errors = rag_index_docs(items, str(folder or "").strip())
     if added == 0 and not docs:
         raise HTTPException(400, errors[0] if errors else "文件导入失败")
-    return {"ok": True if added else False, "added": added, "docs": docs, "errors": errors}
+    return {"ok": True if added else False, "added": added, "docs": docs,
+            "errors": errors}
 
 
-@router.post("/api/rag/ask")
+@router.post("/api/rag/ask", dependencies=[_require_cap("kb.search")])
 def api_rag_ask(payload: Dict[str, Any]):
-    """基于本地知识库检索并生成回答（返回答案与来源片段）。"""
-    question = str(payload.get("question") or "").strip()
+    """基于本地知识库检索并生成回答（返回答案、来源片段与可信度）。"""
+    question = str(payload.get("question") or payload.get("q") or "").strip()
     if len(question) < 2:
         raise HTTPException(400, "请输入要查询的问题")
     try:
@@ -148,13 +165,18 @@ def api_rag_ask(payload: Dict[str, Any]):
     ai = (load_settings().get("ai") or {}).copy()
     if not ai.get("enabled"):
         raise HTTPException(400, "知识库问答需要 AI 支持：请先在「AI 配置」启用 AI 并测试连接")
-    res = rag_ask(question, ai, top_k)
+
+    # 目录限定：folder 展开为该子树下的文档 id
+    res = rag_ask(question, ai, top_k, _resolve_doc_ids(payload))
     return {"ok": True, **res}
 
 
-@router.post("/api/rag/search")
+@router.post("/api/rag/search", dependencies=[_require_cap("kb.search")])
 def api_rag_search(payload: Dict[str, Any]):
-    """仅检索、不生成：返回各路得分与融合结果，用于诊断知识库相关性。"""
+    """仅检索、不生成：返回各路得分与融合结果，用于诊断知识库相关性。
+
+    可选 ``folder``：把诊断范围限定在某个目录子树。
+    """
     q = str(payload.get("question") or payload.get("query") or "").strip()
     if len(q) < 2:
         raise HTTPException(400, "请输入检索关键词")
@@ -163,10 +185,27 @@ def api_rag_search(payload: Dict[str, Any]):
     except (TypeError, ValueError):
         top_k = 5
     ai = (load_settings().get("ai") or {}).copy()
-    return {"ok": True, **rag_search(q, ai, top_k)}
+    return {"ok": True, **rag_search(q, ai, top_k, _resolve_doc_ids(payload))}
 
 
-@router.post("/api/rag/verify-preview")
+def _resolve_doc_ids(payload: Dict[str, Any]) -> Optional[List[str]]:
+    """从请求体解析检索范围：显式 doc_ids 优先，其次按 folder 展开子树。"""
+    ids = payload.get("doc_ids")
+    if isinstance(ids, list) and ids:
+        return [str(i) for i in ids]
+    folder = payload.get("folder")
+    if folder:
+        try:
+            from checkers.rag.engine import load_kb
+            from checkers.rag.tree import docs_in_subtree
+            return docs_in_subtree(load_kb(), str(folder))
+        except Exception:  # noqa: BLE001 - 目录异常时退化为全库检索
+            return None
+    return None
+
+
+@router.post("/api/rag/verify-preview",
+             dependencies=[_require_cap("kb.search")])
 def api_rag_verify_preview(payload: Dict[str, Any]):
     """核验预检：把一段待核验文本切分后，回显核验时会被注入的知识库片段。
 
@@ -205,24 +244,38 @@ def api_rag_verify_preview(payload: Dict[str, Any]):
 
 @router.get("/api/rag/config")
 def api_rag_config_get():
-    """读取知识库切片参数。"""
+    """读取知识库配置（切片参数 / 向量后端 / OCR）。"""
     return rag_kb_config()
 
 
-@router.post("/api/rag/config")
+@router.post("/api/rag/config", dependencies=[_require_cap("kb.manage")])
 def api_rag_config_post(payload: Dict[str, Any]):
-    """更新知识库切片参数（chunk_size / chunk_overlap），变更后需重建索引生效。"""
+    """更新知识库配置；切片参数与后端变更需执行「重建索引」生效。"""
     return rag_save_kb_config(payload or {})
 
 
-@router.post("/api/rag/rebuild")
+@router.post("/api/rag/rebuild", dependencies=[_require_cap("kb.reindex")])
 def api_rag_rebuild():
-    """按已存原文重新切片并全量重嵌向量（调整切片参数后执行）。"""
+    """按已存原文重新切片并全量重嵌向量（调整切片参数或切换后端后执行）。"""
     ai = (load_settings().get("ai") or {}).copy()
     return rag_rebuild(ai)
 
 
-@router.post("/api/rag/delete")
+@router.post("/api/rag/doc/reindex",
+             dependencies=[_require_cap("kb.reindex")])
+def api_rag_doc_reindex(payload: Dict[str, Any]):
+    """单个文档重新切片并重新向量化（文档更新后使用，不影响其他文档）。"""
+    doc_id = str(payload.get("id") or payload.get("doc_id") or "").strip()
+    if not doc_id:
+        raise HTTPException(400, "请提供要重建的文档 id")
+    ai = (load_settings().get("ai") or {}).copy()
+    res = rag_reindex_doc(doc_id, ai)
+    if not res.get("ok"):
+        raise HTTPException(400, res.get("message") or "重建失败")
+    return {"ok": True, **res}
+
+
+@router.post("/api/rag/delete", dependencies=[_require_cap("kb.delete")])
 def api_rag_delete(payload: Dict[str, Any]):
     ids = payload.get("ids") or []
     if not isinstance(ids, list) or not ids:
@@ -231,13 +284,122 @@ def api_rag_delete(payload: Dict[str, Any]):
     return {"ok": True, "removed": removed, "names": names}
 
 
-@router.post("/api/rag/clear")
+@router.post("/api/rag/clear", dependencies=[_require_cap("kb.delete")])
 def api_rag_clear():
     rag_clear()
     return {"ok": True}
 
 
-@router.get("/api/rag/file/{doc_id}")
+# ---------------------------------------------------------------------------
+# 树形目录
+# ---------------------------------------------------------------------------
+@router.get("/api/rag/tree")
+def api_rag_tree():
+    """目录树（目录 + 文档），供左侧导航渲染。"""
+    return {"ok": True, "tree": rag_tree()}
+
+
+@router.get("/api/rag/folders")
+def api_rag_folders():
+    """扁平目录列表（含路径与文档数），用于「移动到…」下拉。"""
+    return {"ok": True, "folders": rag_folders()}
+
+
+@router.post("/api/rag/folder", dependencies=[_require_cap("kb.manage")])
+def api_rag_folder_create(payload: Dict[str, Any]):
+    """新建目录。"""
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "请输入目录名")
+    res = rag_folder_create(name, str(payload.get("parent") or "").strip())
+    if not res.get("ok"):
+        raise HTTPException(400, res.get("message") or "新建失败")
+    return res
+
+
+@router.post("/api/rag/folder/rename",
+             dependencies=[_require_cap("kb.manage")])
+def api_rag_folder_rename(payload: Dict[str, Any]):
+    """重命名目录。"""
+    fid = str(payload.get("id") or "").strip()
+    name = str(payload.get("name") or "").strip()
+    if not fid or not name:
+        raise HTTPException(400, "请提供目录 id 与新名称")
+    res = rag_folder_rename(fid, name)
+    if not res.get("ok"):
+        raise HTTPException(400, res.get("message") or "重命名失败")
+    return res
+
+
+@router.post("/api/rag/folder/move",
+             dependencies=[_require_cap("kb.manage")])
+def api_rag_folder_move(payload: Dict[str, Any]):
+    """移动目录到新的父目录（服务端校验环路）。"""
+    fid = str(payload.get("id") or "").strip()
+    if not fid:
+        raise HTTPException(400, "请提供目录 id")
+    res = rag_folder_move(fid, str(payload.get("parent") or "").strip())
+    if not res.get("ok"):
+        raise HTTPException(400, res.get("message") or "移动失败")
+    return res
+
+
+@router.post("/api/rag/folder/delete",
+             dependencies=[_require_cap("kb.delete")])
+def api_rag_folder_delete(payload: Dict[str, Any]):
+    """删除目录。``cascade=true`` 时连同子目录与文档一并删除，
+    否则把子目录与文档上移到父级（不丢数据）。"""
+    fid = str(payload.get("id") or "").strip()
+    if not fid:
+        raise HTTPException(400, "请提供目录 id")
+    res = rag_folder_delete(fid, bool(payload.get("cascade")))
+    if not res.get("ok"):
+        raise HTTPException(400, res.get("message") or "删除失败")
+    return res
+
+
+@router.post("/api/rag/docs/move",
+             dependencies=[_require_cap("kb.upload")])
+def api_rag_docs_move(payload: Dict[str, Any]):
+    """批量移动文档到目标目录。"""
+    ids = payload.get("ids") or []
+    if not isinstance(ids, list) or not ids:
+        raise HTTPException(400, "请选择要移动的文档")
+    res = rag_docs_move(ids, str(payload.get("folder") or "").strip())
+    if not res.get("ok"):
+        raise HTTPException(400, res.get("message") or "移动失败")
+    return res
+
+
+# ---------------------------------------------------------------------------
+# 权限
+# ---------------------------------------------------------------------------
+@router.get("/api/rag/permissions")
+def api_rag_permissions_get():
+    """当前角色及其能力矩阵。"""
+    return rag_permissions()
+
+
+@router.post("/api/rag/permissions",
+             dependencies=[_require_cap("kb.manage")])
+def api_rag_permissions_post(payload: Dict[str, Any]):
+    """自定义角色能力矩阵；``{"reset": true}`` 恢复默认。"""
+    res = rag_save_permissions(payload or {})
+    if not res.get("ok"):
+        raise HTTPException(403, res.get("message") or "保存失败")
+    return res
+
+
+# ---------------------------------------------------------------------------
+# 解析能力自检
+# ---------------------------------------------------------------------------
+@router.get("/api/rag/parsers")
+def api_rag_parsers():
+    """各格式解析与 OCR 可用性，用于上传前的提示与排查。"""
+    return rag_parser_status()
+
+
+@router.get("/api/rag/file/{doc_id}", dependencies=[_require_cap("kb.view")])
 def api_rag_file(doc_id: str):
     """下载知识库中的原始文档（来源跳转）。"""
     p = rag_doc_file(doc_id)

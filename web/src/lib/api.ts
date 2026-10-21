@@ -27,6 +27,10 @@ import type {
   KbStatus,
   KbUploadResp,
   KbVerifyPreviewResp,
+  KbTreeNode,
+  KbFolder,
+  KbPermissions,
+  KbParserStatus,
   OverviewData,
   RulesData,
   ScanCleanResp,
@@ -318,22 +322,57 @@ export const api = {
 
   /* ---------- 本地知识库（RAG 检索问答） ---------- */
   kbStatus: () => request<KbStatus>("GET", "/api/rag/status"),
-  kbUpload: (files: File[]) => {
+  kbUpload: (files: File[], folder = "") => {
     const fd = new FormData();
     files.forEach((f) => fd.append("files", f));
+    fd.append("folder", folder || "");
     return request<KbUploadResp>("POST", "/api/rag/upload", fd, { form: true });
   },
-  kbAsk: (body: { question: string; top_k?: number }) => request<KbAskResp>("POST", "/api/rag/ask", body),
+  kbAsk: (body: { question: string; top_k?: number; folder?: string }) =>
+    request<KbAskResp>("POST", "/api/rag/ask", body),
   kbDelete: (ids: string[]) => request<{ ok: boolean; removed: number; names: string[] }>("POST", "/api/rag/delete", { ids }),
   kbClear: () => request<{ ok: boolean }>("POST", "/api/rag/clear"),
   kbDownload: (docId: string) => request<Blob>("GET", `/api/rag/file/${encodeURIComponent(docId)}`, undefined, { blob: true }),
-  kbSearch: (body: { question: string; top_k?: number }) => request<KbSearchResp>("POST", "/api/rag/search", body),
+  kbSearch: (body: { question: string; top_k?: number; folder?: string }) =>
+    request<KbSearchResp>("POST", "/api/rag/search", body),
   kbConfig: () => request<{ ok: boolean; config: KbConfig }>("GET", "/api/rag/config"),
   kbSaveConfig: (body: Partial<KbConfig>) => request<{ ok: boolean; config: KbConfig }>("POST", "/api/rag/config", body),
   kbRebuild: () => request<{ ok: boolean; rebuilt: number; skipped: number; chunks: number; embed_model: string }>(
     "POST", "/api/rag/rebuild"),
   kbVerifyPreview: (body: { text: string; top_k?: number }) =>
     request<KbVerifyPreviewResp>("POST", "/api/rag/verify-preview", body),
+
+  /* 树形目录 */
+  kbTree: () => request<{ ok: boolean; tree: KbTreeNode }>("GET", "/api/rag/tree"),
+  kbFolders: () => request<{ ok: boolean; folders: KbFolder[] }>("GET", "/api/rag/folders"),
+  kbCreateFolder: (name: string, parent = "") =>
+    request<{ ok: boolean; folder?: KbFolder; message?: string }>(
+      "POST", "/api/rag/folder", { name, parent }),
+  kbRenameFolder: (id: string, name: string) =>
+    request<{ ok: boolean; folder?: KbFolder; message?: string }>(
+      "POST", "/api/rag/folder/rename", { id, name }),
+  kbMoveFolder: (id: string, parent: string) =>
+    request<{ ok: boolean; folder?: KbFolder; message?: string }>(
+      "POST", "/api/rag/folder/move", { id, parent }),
+  kbDeleteFolder: (id: string, cascade = false) =>
+    request<{ ok: boolean; message?: string; [k: string]: unknown }>(
+      "POST", "/api/rag/folder/delete", { id, cascade }),
+  kbMoveDocs: (ids: string[], folder = "") =>
+    request<{ ok: boolean; moved: number; message?: string }>(
+      "POST", "/api/rag/docs/move", { ids, folder }),
+
+  /* 单文档重向量化 */
+  kbReindexDoc: (id: string) =>
+    request<{ ok: boolean; message?: string; [k: string]: unknown }>(
+      "POST", "/api/rag/doc/reindex", { id }),
+
+  /* 权限 */
+  kbPermissions: () => request<KbPermissions>("GET", "/api/rag/permissions"),
+  kbSavePermissions: (body: Record<string, unknown>) =>
+    request<KbPermissions & { message?: string }>("POST", "/api/rag/permissions", body),
+
+  /* 解析能力 / 向量后端 */
+  kbParsers: () => request<KbParserStatus>("GET", "/api/rag/parsers"),
 
   /* ---------- 报告 ---------- */
   report: (body: { operator: string; org: string; include_cover: boolean; report_filter?: "all" | "fluency" }) =>

@@ -12,3 +12,10 @@ uvicorn>=0.20                     # ASGI 服务器
 python-multipart>=0.0.6          # 文件上传解析（multipart）
 python-docx>=1.0.0                # Word 文档解析与报告生成
 openpyxl>=3.1.0                   # Excel 文档解析
+
+# ---------- 知识库模块（RAG + 向量库 + 多格式解析 + OCR） ----------
+chromadb>=0.5.0                   # 向量数据库（默认后端，本地持久化；缺失时自动降级内存后端）
+pypdf>=3.0                        # PDF 文本层解析
+PyMuPDF>=1.24                     # PDF 栅格化（扫描页送 OCR 用）
+rapidocr-onnxruntime>=1.3         # 中文 OCR（扫描件 PDF / 图片识别，离线可用）
+Pillow>=10.0                      # 图片规范化（OCR 前置处理）

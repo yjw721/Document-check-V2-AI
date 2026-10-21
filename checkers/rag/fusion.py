@@ -40,7 +40,7 @@ def _jaccard(a: set, b: set) -> float:
 
 def mmr(cands: Sequence[Tuple[int, float]],
         token_sets: Sequence[set],
-        vecs: Sequence[Sequence[float]] = (),
+        vecs=None,
         top_k: int = 3,
         lam: float = 0.72,
         w_vec: float = 0.5) -> List[int]:
@@ -48,6 +48,10 @@ def mmr(cands: Sequence[Tuple[int, float]],
 
     ``lam=1`` 退化为纯按融合分排序；``lam`` 越小越强调与已选片段的差异。
     相似度用「词元 Jaccard + 向量余弦」的加权（无向量时只用前者）。
+
+    ``vecs`` 支持两种形态：
+    - 与全体片段等长的**序列**（内存后端，``vecs[i]``）；
+    - ``{片段下标: 向量}`` 的**映射**（向量库后端，只取候选，避免全库拉取）。
     """
     if not cands:
         return []
@@ -78,20 +82,24 @@ def mmr(cands: Sequence[Tuple[int, float]],
 
 
 def _sim(i: int, j: int, token_sets: Sequence[set],
-         vecs: Sequence[Sequence[float]], w_vec: float) -> float:
+         vecs=None, w_vec: float = 0.5) -> float:
+    """片段 i 与 j 的相似度：词元 Jaccard 与向量余弦的加权。
+
+    ``vecs`` 可以是等长序列，也可以是 ``{下标: 向量}`` 映射（见 ``mmr``）。
+    """
     s = 0.0
     try:
         s += _jaccard(token_sets[i], token_sets[j])
-    except (IndexError, TypeError):
+    except (IndexError, KeyError, TypeError):
         pass
     if vecs and w_vec > 0:
         try:
             vi, vj = vecs[i], vecs[j]
-            if vi and vj:
-                from checkers.rag.vectors import cos
-                s = (1 - w_vec) * s + w_vec * max(0.0, cos(vi, vj))
-        except (IndexError, TypeError):
-            pass
+        except (IndexError, KeyError, TypeError):
+            vi = vj = ()
+        if vi and vj:
+            from checkers.rag.vectors import cos
+            s = (1 - w_vec) * s + w_vec * max(0.0, cos(vi, vj))
     return s
 
 
