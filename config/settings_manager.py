@@ -121,6 +121,7 @@ DEFAULTS: Dict[str, Any] = {
         # —— 本地知识库（RAG 检索问答） ——
         "kb_enabled": False,                   # AI 核验时检索本地知识库作为参考资料
         "kb_top_k": 3,                         # 每次核验注入的知识库片段数量
+        "kb_dense_in_verify": False,           # 核验链路是否启用向量检索（关闭时仅 BM25，速度更快）
         "embed_enabled": True,                 # 使用 Ollama 嵌入模型做向量检索（无嵌入模型自动退化为 BM25）
         "embed_model": "bge-m3",               # Ollama 嵌入模型名（如 bge-m3 / nomic-embed-text）
         # —— 核验行为（可控性增强） ——

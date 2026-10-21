@@ -22,8 +22,11 @@ import type {
   IssueStateBody,
   IssuesData,
   KbAskResp,
+  KbConfig,
+  KbSearchResp,
   KbStatus,
   KbUploadResp,
+  KbVerifyPreviewResp,
   OverviewData,
   RulesData,
   ScanCleanResp,
@@ -324,6 +327,13 @@ export const api = {
   kbDelete: (ids: string[]) => request<{ ok: boolean; removed: number; names: string[] }>("POST", "/api/rag/delete", { ids }),
   kbClear: () => request<{ ok: boolean }>("POST", "/api/rag/clear"),
   kbDownload: (docId: string) => request<Blob>("GET", `/api/rag/file/${encodeURIComponent(docId)}`, undefined, { blob: true }),
+  kbSearch: (body: { question: string; top_k?: number }) => request<KbSearchResp>("POST", "/api/rag/search", body),
+  kbConfig: () => request<{ ok: boolean; config: KbConfig }>("GET", "/api/rag/config"),
+  kbSaveConfig: (body: Partial<KbConfig>) => request<{ ok: boolean; config: KbConfig }>("POST", "/api/rag/config", body),
+  kbRebuild: () => request<{ ok: boolean; rebuilt: number; skipped: number; chunks: number; embed_model: string }>(
+    "POST", "/api/rag/rebuild"),
+  kbVerifyPreview: (body: { text: string; top_k?: number }) =>
+    request<KbVerifyPreviewResp>("POST", "/api/rag/verify-preview", body),
 
   /* ---------- 报告 ---------- */
   report: (body: { operator: string; org: string; include_cover: boolean; report_filter?: "all" | "fluency" }) =>

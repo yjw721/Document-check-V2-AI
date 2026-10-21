@@ -58,6 +58,8 @@ export interface Issue {
   detail: string;
   snippet?: string;
   suggestion?: string;
+  /* 知识库（RAG）联动：本条判定所依据的规范资料出处（空 = 未命中知识库） */
+  evidence?: string;
   file_index: number;
   issue_index: number;
   state: IssueState;
@@ -309,6 +311,7 @@ export interface AiSettings {
   /* —— 本地知识库（RAG） —— */
   kb_enabled?: boolean;
   kb_top_k?: number;
+  kb_dense_in_verify?: boolean;
   embed_enabled?: boolean;
   embed_model?: string;
   /* —— 核验行为（可控性增强） —— */
@@ -882,17 +885,26 @@ export interface KbDoc {
   chunks: number;
   added_at: string;
 }
+export interface KbConfig {
+  chunk_size: number;
+  chunk_overlap: number;
+}
 export interface KbStatus {
   ok: boolean;
   docs: KbDoc[];
   total_chunks: number;
   embed_model: string;
   embed_available: boolean;
+  embed_resolved?: boolean;
+  embed_resolved_model?: string;
+  embed_dim?: number;
   updated_at: string;
+  config?: KbConfig;
 }
 export interface KbSource {
   file: string;
   section: string;
+  path?: string;
   loc: string;
   snippet: string;
   score: number;
@@ -904,11 +916,42 @@ export interface KbAskResp {
   sources: KbSource[];
   embed_used: boolean;
   embed_model: string;
+  mode?: string;
   elapsed: number;
+  error?: string;
 }
 export interface KbUploadResp {
   ok: boolean;
   added: number;
-  docs: { id: string; name: string; chars: number; chunks: number }[];
+  docs: { id: string; name: string; chars: number; chunks: number; reused?: boolean }[];
   errors: string[];
+}
+/* 检索诊断：仅检索、不生成，返回各路得分与融合名次 */
+export interface KbSearchHit {
+  rank: number;
+  chunk_id: string;
+  doc_id: string;
+  file: string;
+  section: string;
+  path: string;
+  loc: string;
+  rrf: number;
+  bm25: number;
+  cos: number;
+  text: string;
+}
+export interface KbSearchResp {
+  ok: boolean;
+  hits: KbSearchHit[];
+  mode: string;
+  query_terms: string[];
+  stats: { chunks: number; docs: number; vectors: number };
+}
+/* 核验预检：回显某段待核验文本会被注入哪些知识库片段 */
+export interface KbVerifyPreviewResp {
+  ok: boolean;
+  segments: number;
+  context: string;
+  refs: KbSource[];
+  hits: { chunk_id: string; file: string; path: string; score: number; rank: number }[];
 }

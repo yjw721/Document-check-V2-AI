@@ -69,6 +69,9 @@ from checkers.rag_store import (
     kb_status as rag_kb_status, index_docs as rag_index_docs,
     ask as rag_ask, delete_docs as rag_delete_docs,
     clear_kb as rag_clear, doc_file as rag_doc_file,
+    search_debug as rag_search, rebuild_index as rag_rebuild,
+    kb_config as rag_kb_config, save_kb_config as rag_save_kb_config,
+    retrieve_for_verify as rag_verify_retrieve, pack_hits as rag_pack,
 )
 
 
@@ -147,6 +150,76 @@ def api_rag_ask(payload: Dict[str, Any]):
         raise HTTPException(400, "知识库问答需要 AI 支持：请先在「AI 配置」启用 AI 并测试连接")
     res = rag_ask(question, ai, top_k)
     return {"ok": True, **res}
+
+
+@router.post("/api/rag/search")
+def api_rag_search(payload: Dict[str, Any]):
+    """仅检索、不生成：返回各路得分与融合结果，用于诊断知识库相关性。"""
+    q = str(payload.get("question") or payload.get("query") or "").strip()
+    if len(q) < 2:
+        raise HTTPException(400, "请输入检索关键词")
+    try:
+        top_k = max(1, min(10, int(payload.get("top_k") or 5)))
+    except (TypeError, ValueError):
+        top_k = 5
+    ai = (load_settings().get("ai") or {}).copy()
+    return {"ok": True, **rag_search(q, ai, top_k)}
+
+
+@router.post("/api/rag/verify-preview")
+def api_rag_verify_preview(payload: Dict[str, Any]):
+    """核验预检：把一段待核验文本切分后，回显核验时会被注入的知识库片段。
+
+    用于确认「AI 核验注入知识库」实际生效、以及命中质量是否符合预期。
+    """
+    text = str(payload.get("text") or "").strip()
+    if len(text) < 4:
+        raise HTTPException(400, "请输入待核验的文本（至少 4 个字符）")
+    try:
+        top_k = max(1, min(8, int(payload.get("top_k") or 3)))
+    except (TypeError, ValueError):
+        top_k = 3
+    from config.settings_manager import load_settings
+    ai = (load_settings().get("ai") or {}).copy()
+    # 切分口径与 ai_check_file 保持一致
+    try:
+        max_chars = max(300, int(ai.get("max_chars") or 3000))
+    except (TypeError, ValueError):
+        max_chars = 3000
+    try:
+        max_requests = max(1, min(20, int(ai.get("max_requests") or 10)))
+    except (TypeError, ValueError):
+        max_requests = 10
+    try:
+        from checkers.ai_checker import _chunk_blocks as _ai_chunk
+        segs = [t for _l, t in _ai_chunk([("片段", text)], max_chars, max_requests)]
+    except Exception:  # noqa: BLE001 - 切分失败时退化为整段
+        segs = [text]
+    hits = rag_verify_retrieve(segs, top_k=top_k,
+                               dense=bool(ai.get("kb_dense_in_verify", False)),
+                               ai_cfg=ai)
+    ctx, refs = rag_pack(hits, 6000)
+    return {"ok": True, "segments": len(segs), "context": ctx, "refs": refs,
+            "hits": hits}
+
+
+@router.get("/api/rag/config")
+def api_rag_config_get():
+    """读取知识库切片参数。"""
+    return rag_kb_config()
+
+
+@router.post("/api/rag/config")
+def api_rag_config_post(payload: Dict[str, Any]):
+    """更新知识库切片参数（chunk_size / chunk_overlap），变更后需重建索引生效。"""
+    return rag_save_kb_config(payload or {})
+
+
+@router.post("/api/rag/rebuild")
+def api_rag_rebuild():
+    """按已存原文重新切片并全量重嵌向量（调整切片参数后执行）。"""
+    ai = (load_settings().get("ai") or {}).copy()
+    return rag_rebuild(ai)
 
 
 @router.post("/api/rag/delete")

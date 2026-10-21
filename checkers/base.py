@@ -52,6 +52,8 @@ class Issue:
     source: str = ""              # builtin | custom | wordbank
     group: str = ""               # 规则/词库分组名
     tag: str = ""                 # 问题类型标签
+    # 知识库（RAG）联动：本条判定所依据的规范资料出处（空 = 未命中知识库）
+    evidence: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

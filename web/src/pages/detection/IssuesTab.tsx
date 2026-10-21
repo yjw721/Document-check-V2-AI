@@ -18,6 +18,10 @@ export default function IssuesTab() {
   const [sev, setSev] = useState("all");
   const [state, setState] = useState("all");
   const [q, setQ] = useState("");
+  /* 知识库联动筛选：仅看命中规范依据 / 仅看未命中的问题 */
+  const [evid, setEvid] = useState<"all" | "with" | "without">("all");
+  /* 知识依据展开状态（按行索引） */
+  const [openEv, setOpenEv] = useState<Record<number, boolean>>({});
   /* 最近一次核验任务的完成时间戳：任务结束后强制刷新，避免展示上一轮旧结果 */
   const taskStamp = useTaskState().state.stamp;
 
@@ -35,9 +39,10 @@ export default function IssuesTab() {
       (i) =>
         (sev === "all" || i.severity === sev) &&
         (state === "all" || i.state === state) &&
+        (evid === "all" || (evid === "with" ? !!i.evidence : !i.evidence)) &&
         (!kw || (i.rule_title + i.detail + i.location + i.file_name).toLowerCase().includes(kw)),
     );
-  }, [issues, sev, state, q]);
+  }, [issues, sev, state, q, evid]);
 
   const toggle = async (i: Issue, act: "ignore" | "check") => {
     const next: IssueState =
@@ -96,6 +101,11 @@ export default function IssuesTab() {
           <option value="ignored">已忽略</option>
           <option value="checked">已核查</option>
         </HoloSelect>
+        <HoloSelect className="w-[150px]" value={evid} onChange={(e) => setEvid(e.target.value as "all" | "with" | "without")}>
+          <option value="all">全部依据</option>
+          <option value="with">有知识依据</option>
+          <option value="without">无知识依据</option>
+        </HoloSelect>
         <HoloInput
           className="min-w-[200px] flex-1"
           placeholder="搜索规则 / 原文 / 位置 / 文件名…"
@@ -136,6 +146,23 @@ export default function IssuesTab() {
                     <td className="px-4 py-3 text-sm text-white/70">
                       {i.detail}
                       {i.snippet && <div className="mt-1 text-xs text-white/40">原文：{i.snippet}</div>}
+                      {i.evidence && (
+                        <button
+                          className="mt-2 block w-full rounded-xl border border-cyan-300/25 bg-cyan-400/[0.06] px-2.5 py-1.5 text-left text-[11px] text-cyan-100/85 transition-all hover:border-cyan-300/45 hover:bg-cyan-400/[0.12] active:scale-[0.99]"
+                          onClick={() => setOpenEv((m) => ({ ...m, [idx]: !m[idx] }))}
+                          title="展开 / 收起知识库依据"
+                        >
+                          <span className="font-semibold">📚 知识库依据</span>
+                          <span className="ml-1 text-white/40">{openEv[idx] ? "▲" : "▼"}</span>
+                          <div
+                            className={`mt-1 whitespace-pre-wrap leading-relaxed text-white/60 ${
+                              openEv[idx] ? "" : "line-clamp-2"
+                            }`}
+                          >
+                            {i.evidence}
+                          </div>
+                        </button>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-sm text-white/50">{i.suggestion || "—"}</td>
                     <td className="whitespace-nowrap px-4 py-3">

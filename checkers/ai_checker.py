@@ -31,7 +31,7 @@ import time
 import urllib.error
 import urllib.request
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from checkers.base import Issue, clip
 from checkers import ai_activity
@@ -237,8 +237,9 @@ _SYS_PROMPT = (
     "7. 交叉一致性：同一主体（名称 / 编号 / 日期 / 金额 / 单位 / 口径）在片段内不同位置"
     "出现时必须一致，前后称谓、口径、时点必须统一；\n"
     "8. 逻辑与内容：前后矛盾、因果不成立、表意不清、逻辑不通、内容缺失、事实性错误；\n"
-    "9. 规范符合性：若提供了参考资料，必须严格依据其条款核查，并在 detail 中注明"
-    "所依据的标准名称或条款编号。\n"
+    "9. 规范符合性：若提供了参考资料 / 知识库资料，必须严格依据其条款核查，并在 detail 中注明"
+    "所依据的标准名称或条款编号（或资料原文要点）；资料与片段内容不一致时，以资料为准判定"
+    "『规范不符』，但不得脱离片段原文臆造问题。\n"
     "【输出纪律】（务必遵守，宁可漏报也不要误报）\n"
     "- 每条问题的 quote 必须是片段中【逐字出现】的原句 / 原词，严禁编造、拼凑或改写后才引用；\n"
     "- 必须能在片段中直接举证才输出，无法确证的问题一律不输出；\n"
@@ -660,6 +661,26 @@ def _call_openai(cfg: Dict[str, Any], messages: List[Dict[str, str]]) -> str:
 def _norm_text(s: str) -> str:
     """去掉空白与标点，仅保留字母 / 数字 / 汉字，用于一致性比对。"""
     return re.sub(r"[^\w]", "", str(s or ""))
+
+
+# 知识库（RAG）联动：单个核验片段注入的规范资料字符上限
+_KB_CTX_BUDGET = 6000
+
+
+def _fmt_evidence(refs: Sequence[Dict[str, Any]], limit: int = 3) -> str:
+    """把命中片段格式化为可展示的「知识依据」文本。"""
+    parts: List[str] = []
+    for r in list(refs)[:limit]:
+        path = (r.get("path") or r.get("section") or "").strip()
+        head = str(r.get("file") or "") + (f" / {path}" if path else "")
+        snippet = str(r.get("snippet") or "").strip().replace("\n", " ")
+        score = r.get("score")
+        tail = f"（相关度 {score}）" if score else ""
+        loc = str(r.get("loc") or "").strip()
+        if loc:
+            tail += f"｜位置：{loc}"
+        parts.append(f"{head}：{snippet}{tail}")
+    return "\n".join(parts)
 
 
 # 引用命中的最小连续字符数（严格取证模式下为 10，宽松模式回退为 8）
@@ -1224,27 +1245,25 @@ def ai_check_file(path: str, ftype: str, issues_out: List[Issue],
     ref_text = ""
     if ai.get("ref_enabled", True):
         ref_text = _load_ref_text(int(ai.get("ref_max_chars") or 2000))
-    rag_text = ""
-    if ai.get("kb_enabled"):
+    # ---- 知识库（RAG）联动 ----
+    # 旧实现用「文件开头 2000 字」作唯一查询，与逐段核验内容脱节，长文档后半段
+    # 几乎取不到依据。改为：以每个待核验片段各起一路检索（BM25 走缓存索引，
+    # 毫秒级；向量路把所有片段**一次性**批量嵌入，只发一批请求），
+    # 再用 RRF 融合为文件级依据，命中原文随问题回传（Issue.evidence）。
+    kb_on = bool(ai.get("kb_enabled"))
+    kb_top_k = max(1, min(8, int(ai.get("kb_top_k") or 3)))
+    kb_dense = bool(ai.get("kb_dense_in_verify", False))
+    rag_text, rag_refs = "", []
+    if kb_on:
         try:
             from checkers import rag_store
-            _hits = rag_store.retrieve(
-                "\n".join(b[1] for b in blocks)[:2000],  # 以文件开头为查询词（BM25 快速检索）
-                {"embed_enabled": False},                # 核验链路仅用 BM25，保持响应稳定
-                int(ai.get("kb_top_k") or 3),
-            )
-            if _hits:
-                _parts, _used = [], 0
-                for _h in _hits:
-                    _part = f"【{_h['file']} / {_h['section']}】\n{_h['text']}"
-                    if _used + len(_part) > 6000:
-                        break
-                    _parts.append(_part)
-                    _used += len(_part)
-                if _parts:
-                    rag_text = "\n\n".join(_parts)
+            _hs = rag_store.retrieve_for_verify(
+                [t for _l, t in chunks], top_k=kb_top_k,
+                dense=kb_dense, ai_cfg=ai)
+            rag_text, rag_refs = rag_store.pack_hits(_hs, _KB_CTX_BUDGET)
         except Exception:  # noqa: BLE001 - 知识库异常不影响核验
-            rag_text = ""
+            rag_text, rag_refs = "", []
+
     # 增强审核力度：严格取证阈值 + 置信度门槛 + 深度复核轮次
     strict = bool(ai.get("strict_grounding", True))
     set_strict_grounding(strict)
@@ -1317,20 +1336,26 @@ def ai_check_file(path: str, ftype: str, issues_out: List[Issue],
                 suggestion=it["suggestion"],
                 source="ai",
                 tag=AI_CATEGORY_MAP.get(it.get("category", ""), it.get("category", "") or "其他"),
+                evidence=_fmt_evidence(rag_refs),
             ))
             added += 1
+
+    # 知识库命中情况并入文件级说明，界面徽标 / 任务日志可直接看到
+    kb_note = ""
+    if kb_on:
+        kb_note = f"；知识库命中 {len(rag_refs)} 段"
 
     if fail_reasons and added == 0:
         ai_activity.log_event("verify", model=str(ai.get("model", "")),
                              detail="执行失败：" + "；".join(fail_reasons[:2]), ok=False)
-        return 0, "AI 核验执行失败：" + "；".join(fail_reasons[:2])
+        return 0, "AI 核验执行失败：" + "；".join(fail_reasons[:2]) + kb_note
     if fail_reasons:
         ai_activity.log_event("verify", model=str(ai.get("model", "")),
                              detail=f"部分分段失败，已命中 {added} 条", ok=True)
-        return added, "部分分段失败：" + "；".join(fail_reasons[:2])
+        return added, "部分分段失败：" + "；".join(fail_reasons[:2]) + kb_note
     ai_activity.log_event("verify", model=str(ai.get("model", "")),
                          detail=f"核验通过，命中 {added} 条问题", ok=True)
-    return added, ("完成" + (f"（{sync_note}）" if sync_note else ""))
+    return added, ("完成" + (f"（{sync_note}）" if sync_note else "") + kb_note)
 
 
 def _messages(ai: Dict[str, Any], text: str, ref_text: str = "", rag_text: str = "",
@@ -1428,6 +1453,13 @@ def build_prompt_record(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         model, _sync = resolve_local_model(ai)
     review_prompt = _REVIEW_PROMPT.replace(
         "{found}", "（运行时注入：上一轮已发现的问题清单，逐条输出不重复）")
+    kb_stat: Dict[str, Any] = {}
+    if bool(ai.get("kb_enabled", False)):
+        try:
+            from checkers import rag_store
+            kb_stat = rag_store.kb_status()
+        except Exception:  # noqa: BLE001 - 统计失败不影响归档
+            kb_stat = {}
     return {
         "enabled": bool(ai.get("enabled")),
         "mode": "本地 AI（Ollama，零联网）" if mode == "local" else "联网 AI（OpenAI 兼容接口）",
@@ -1444,6 +1476,10 @@ def build_prompt_record(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
                         else "仅基础检测出问题的文件",
         "ref_enabled": bool(ai.get("ref_enabled", True)),
         "kb_enabled": bool(ai.get("kb_enabled", False)),
+        "kb_top_k": int(ai.get("kb_top_k") or 3),
+        "kb_docs": len(kb_stat.get("docs") or []),
+        "kb_chunks": int(kb_stat.get("total_chunks") or 0),
+        "kb_embed": bool(kb_stat.get("embed_available")),
         "coverage": "全篇均匀覆盖（首段 + 末段 + 等距抽样）",
         "active_skills": [{"id": s["id"], "name": s["name"], "builtin": s.get("builtin", True)}
                           for s in get_active_skill_list(ai)],

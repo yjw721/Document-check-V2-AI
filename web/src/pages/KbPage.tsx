@@ -6,13 +6,23 @@ import HoloSwitch from "../components/ui/HoloSwitch";
 import SectionTitle from "../components/common/SectionTitle";
 import { api } from "../lib/api";
 import { useToast } from "../components/ui/Toast";
-import type { KbAskResp, KbStatus, SettingsData } from "../lib/types";
+import type {
+  KbAskResp,
+  KbSearchResp,
+  KbStatus,
+  KbVerifyPreviewResp,
+  SettingsData,
+} from "../lib/types";
 
-/* 本地知识库问答（RAG）：
- * 上传行业规范 / 术语定义 / 书写规范文档 → 自动切片建立索引（BM25，可选向量）→
- * 基于知识库提出问题获得带来源的回答；并可开启「AI 核验时注入知识库参考」。 */
+/* 本地知识库（RAG）：
+ * 上传行业规范 / 术语定义 / 书写规范文档 → 按标题层级切片（带重叠）建立索引
+ * （BM25 + 可选向量，向量化时带「文档名 / 章节路径」上下文前缀）→
+ * 检索采用双路 RRF 融合 + MMR 去冗余；问答强制标注来源。
+ * 开启「注入知识库」后，核验链路按每个待核验片段各自检索，命中依据随问题回传。 */
 
 const ACCEPT = ".docx,.pdf,.txt,.md,.csv,.xlsx";
+const CHUNK_SIZES = [300, 500, 800, 1200, 2000];
+const OVERLAPS = [0, 60, 100, 150, 200];
 
 function fmtSize(n?: number) {
   if (!n) return "0 B";
@@ -26,6 +36,12 @@ interface Qa {
   resp: KbAskResp;
 }
 
+const MODE_LABEL: Record<string, string> = {
+  hybrid: "向量 + BM25",
+  bm25: "BM25",
+  none: "空库",
+};
+
 export default function KbPage() {
   const toast = useToast();
   const [status, setStatus] = useState<KbStatus | null>(null);
@@ -38,8 +54,25 @@ export default function KbPage() {
   const [asking, setAsking] = useState(false);
   const [qa, setQa] = useState<Qa[]>([]);
 
+  /* 检索诊断 */
+  const [dbgQ, setDbgQ] = useState("");
+  const [dbgK, setDbgK] = useState(5);
+  const [searching, setSearching] = useState(false);
+  const [dbg, setDbg] = useState<KbSearchResp | null>(null);
+
+  /* 切片参数 */
+  const [cfg, setCfg] = useState<{ chunk_size: number; chunk_overlap: number } | null>(null);
+  const [savingCfg, setSavingCfg] = useState(false);
+  const [rebuilding, setRebuilding] = useState(false);
+
+  /* 核验预检：回显某段待核验文本会被注入哪些知识库片段 */
+  const [vpText, setVpText] = useState("");
+  const [vpLoading, setVpLoading] = useState(false);
+  const [vp, setVp] = useState<KbVerifyPreviewResp | null>(null);
+
   /* AI 注入知识库设置（persist 到 ai 组） */
   const [kbEnabled, setKbEnabled] = useState(false);
+  const [kbDense, setKbDense] = useState(false);
   const settingsRef = useRef<SettingsData | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -48,6 +81,7 @@ export default function KbPage() {
       .kbStatus()
       .then((s) => {
         setStatus(s);
+        if (s.config) setCfg(s.config);
         setErr("");
       })
       .catch((e: Error) => setErr(e.message));
@@ -60,6 +94,7 @@ export default function KbPage() {
       .then((s) => {
         settingsRef.current = s;
         setKbEnabled(Boolean(s.ai?.kb_enabled));
+        setKbDense(Boolean(s.ai?.kb_dense_in_verify));
         if (s.ai?.kb_top_k) setTopK(Number(s.ai.kb_top_k));
       })
       .catch(() => {});
@@ -89,8 +124,11 @@ export default function KbPage() {
     try {
       const r = await api.kbUpload(files);
       load();
+      const reused = (r.docs || []).filter((d) => d.reused).length;
       toast(
-        r.added > 0 ? `成功入库 ${r.added} 个文档` : "未成功入库任何文档",
+        r.added > 0
+          ? `成功入库 ${r.added} 个文档${reused ? `（${reused} 个内容未变，已复用索引）` : ""}`
+          : "未成功入库任何文档",
         r.added > 0 ? "ok" : "err",
       );
       if (r.errors?.length) setErr(r.errors.join("；"));
@@ -120,6 +158,72 @@ export default function KbPage() {
     }
   };
 
+  const runSearch = async () => {
+    const q = dbgQ.trim();
+    if (q.length < 2) {
+      toast("请输入检索关键词", "err");
+      return;
+    }
+    setSearching(true);
+    try {
+      const r = await api.kbSearch({ question: q, top_k: dbgK });
+      setDbg(r);
+    } catch (ex) {
+      toast((ex as Error).message, "err");
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const saveCfg = async (patch: Partial<{ chunk_size: number; chunk_overlap: number }>) => {
+    if (!cfg) return;
+    const next = { ...cfg, ...patch };
+    setCfg(next);
+    setSavingCfg(true);
+    try {
+      const r = await api.kbSaveConfig(next);
+      if (r.config) setCfg(r.config);
+      toast("切片参数已保存（对已入库文档需点「重建索引」生效）");
+    } catch (e) {
+      toast((e as Error).message, "err");
+    } finally {
+      setSavingCfg(false);
+    }
+  };
+
+  const runVerifyPreview = async () => {
+    const t = vpText.trim();
+    if (t.length < 4) {
+      toast("请输入待核验的文本", "err");
+      return;
+    }
+    setVpLoading(true);
+    try {
+      const r = await api.kbVerifyPreview({ text: t, top_k: topK });
+      setVp(r);
+    } catch (ex) {
+      toast((ex as Error).message, "err");
+    } finally {
+      setVpLoading(false);
+    }
+  };
+
+  const rebuild = async () => {
+    setRebuilding(true);
+    try {
+      const r = await api.kbRebuild();
+      load();
+      toast(
+        `索引重建完成：${r.rebuilt} 个文档 / ${r.chunks} 个片段` +
+          (r.skipped ? `（${r.skipped} 个无原文跳过）` : ""),
+      );
+    } catch (e) {
+      toast((e as Error).message, "err");
+    } finally {
+      setRebuilding(false);
+    }
+  };
+
   /* 带访问口令头下载原文（new window 无法携带 X-Access-Token） */
   const downloadDoc = async (docId: string, name: string) => {
     try {
@@ -138,6 +242,7 @@ export default function KbPage() {
   };
 
   const docs = status?.docs ?? [];
+  const totalChars = docs.reduce((s, d) => s + (d.chars || 0), 0);
   return (
     <div className="space-y-4">
       <HoloCard className="p-6">
@@ -146,8 +251,13 @@ export default function KbPage() {
           <span className={`rounded-full border px-2.5 py-0.5 text-[11px] ${status?.embed_available ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300" : "border-amber-400/30 bg-amber-400/10 text-amber-300"}`}>
             {status?.embed_available ? `向量检索可用 · ${status.embed_model}` : "BM25 检索模式"}
           </span>
+          {!!status?.embed_resolved_model && status.embed_resolved_model !== status.embed_model && (
+            <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-0.5 text-[11px] text-white/45">
+              本机可用嵌入模型：{status.embed_resolved_model}
+            </span>
+          )}
           <span className="text-[11px] text-white/40">
-            {docs.length} 个文档 · {status?.total_chunks ?? 0} 个片段 · 索引更新于 {status?.updated_at || "--"}
+            {docs.length} 个文档 · {status?.total_chunks ?? 0} 个片段 · {fmtSize(totalChars)} 文本 · 索引更新于 {status?.updated_at || "--"}
           </span>
         </div>
 
@@ -165,6 +275,9 @@ export default function KbPage() {
               className="hidden"
               onChange={onPickFiles}
             />
+            <HoloButton variant="ghost" size="sm" loading={rebuilding} disabled={!docs.length || rebuilding} onClick={rebuild} title="按已存原文重新切片并全量重嵌向量">
+              🔄 重建索引
+            </HoloButton>
             {docs.length > 0 && (
               <HoloButton
                 variant="danger"
@@ -179,14 +292,14 @@ export default function KbPage() {
               </HoloButton>
             )}
             <span className="ml-auto text-[11px] text-white/35">
-              支持 .docx / .pdf / .txt / .md / .csv / .xlsx，单文件 ≤ 30MB，自动按章节切片
+              支持 .docx / .pdf / .txt / .md / .csv / .xlsx，单文件 ≤ 30MB，按标题层级自动切片
             </span>
           </div>
           {!status?.embed_available && (
             <div className="mt-2 rounded-xl border border-amber-400/20 bg-amber-400/[0.06] px-3 py-2 text-[12px] text-amber-200/80">
               提示：未在 Ollama 检测到嵌入模型，当前使用 BM25 关键词检索（无需额外依赖）。
               若在 Ollama 安装 bge-m3（<code className="text-amber-100">ollama pull bge-m3</code>）
-              并在「AI 配置」开启嵌入，将自动启用向量检索提升相关性。
+              并在「AI 配置」开启嵌入，然后点「重建索引」，即可启用向量检索提升相关性。
             </div>
           )}
           {err && <div className="mt-2 text-[12px] text-red-300/90">提示：{err}</div>}
@@ -201,9 +314,9 @@ export default function KbPage() {
                   <span className="text-lg leading-none">📄</span>
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-[13px] font-medium text-white/90" title={d.name}>{d.name}</div>
-                    <div className="mt-1 text-[11px] text-white/45">
-                      {fmtSize(d.size)} · {d.chunks} 段 · {new Date(d.added_at.replace(" ", "T")).toLocaleString()}
-                    </div>
+                  <div className="mt-1 text-[11px] text-white/45">
+                    {fmtSize(d.size)} · {d.chunks} 段 · {d.added_at ? new Date(d.added_at.replace(" ", "T")).toLocaleString() : "--"}
+                  </div>
                   </div>
                   <button
                     className="shrink-0 rounded-lg px-1.5 py-0.5 text-[11px] text-red-300/70 transition-all hover:bg-red-400/10 hover:text-red-200"
@@ -221,6 +334,42 @@ export default function KbPage() {
             ))}
           </div>
         )}
+      </HoloCard>
+
+      {/* 切片与索引配置 */}
+      <HoloCard className="p-6">
+        <SectionTitle className="!mb-0">切片与索引参数</SectionTitle>
+        <div className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-3">
+          <label className="flex items-center gap-2 text-[12px] text-white/50">
+            片段目标长度
+            <HoloSelect
+              className="w-[110px]"
+              value={cfg?.chunk_size ?? 500}
+              disabled={savingCfg || !cfg}
+              onChange={(e) => saveCfg({ chunk_size: Number(e.target.value) })}
+            >
+              {CHUNK_SIZES.map((n) => (
+                <option key={n} value={n}>{n} 字</option>
+              ))}
+            </HoloSelect>
+          </label>
+          <label className="flex items-center gap-2 text-[12px] text-white/50">
+            片段重叠
+            <HoloSelect
+              className="w-[110px]"
+              value={cfg?.chunk_overlap ?? 100}
+              disabled={savingCfg || !cfg}
+              onChange={(e) => saveCfg({ chunk_overlap: Number(e.target.value) })}
+            >
+              {OVERLAPS.map((n) => (
+                <option key={n} value={n}>{n} 字</option>
+              ))}
+            </HoloSelect>
+          </label>
+          <span className="text-[11px] text-white/35">
+            重叠可缓解跨片段语义断裂；参数改动后点「重建索引」对全部文档生效。
+          </span>
+        </div>
       </HoloCard>
 
       {/* AI 核验注入 */}
@@ -253,8 +402,147 @@ export default function KbPage() {
               ))}
             </HoloSelect>
           </label>
-          <span className="text-[11px] text-white/35">仅对已上传的知识库文档生效；核验时将依据片段核查『规范不符』并注明出处。</span>
+          <HoloSwitch
+            checked={kbDense}
+            disabled={saving || !status?.embed_resolved}
+            onChange={(v) => {
+              setKbDense(v);
+              commitKbSetting({ kb_dense_in_verify: v },
+                              v ? "已开启：核验时启用向量检索（更准，但本地推理更慢）"
+                                 : "已关闭：核验仅用 BM25 关键词检索（更快）");
+            }}
+            label="核验时启用向量（稠密）检索"
+          />
+          <span className="text-[11px] text-white/35">仅对已上传的知识库文档生效；核验时按片段核查『规范不符』并注明出处。</span>
         </div>
+
+        {/* 核验预检 */}
+        <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+          <div className="text-[12px] font-medium text-white/70">核验预检</div>
+          <div className="mt-1 text-[11px] text-white/35">
+            粘贴一段待核验文本，查看核验时会被注入的知识库片段——用于确认联动生效与命中质量。
+          </div>
+          <div className="mt-3 flex flex-col gap-3 md:flex-row">
+            <HoloTextarea
+              className="flex-1"
+              rows={3}
+              placeholder="如：应收账款账面余额 23,381,372.12 元，账龄主要为 1 至 2 年，坏账准备按 5% 计提。"
+              value={vpText}
+              onChange={(e) => setVpText(e.target.value)}
+            />
+            <div className="flex flex-row items-end">
+              <HoloButton loading={vpLoading} onClick={runVerifyPreview} disabled={vpLoading}>
+                🧪 预检命中
+              </HoloButton>
+            </div>
+          </div>
+
+          {vp && (
+            <div className="mt-3 space-y-2">
+              <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                <span className="rounded-md bg-white/10 px-1.5 py-0.5 text-white/60">
+                  切分 {vp.segments} 段
+                </span>
+                <span className="text-white/40">注入 {vp.refs.length} 个知识片段</span>
+                {vp.refs.length === 0 && (
+                  <span className="text-amber-200/75">未命中：请确认已上传相关资料文档</span>
+                )}
+              </div>
+              {vp.refs.map((r, j) => (
+                <div key={j} className="rounded-xl border border-white/10 bg-white/[0.02] p-2.5">
+                  <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                    <span className="rounded-md bg-cyan-400/15 px-1.5 py-0.5 text-cyan-100/85">
+                      相关度 {r.score}
+                    </span>
+                    <span className="text-white/70">
+                      {r.file}
+                      {r.path ? ` / ${r.path}` : ""}
+                    </span>
+                    <button
+                      className="ml-auto rounded-lg border border-white/10 px-2 py-0.5 text-white/50 transition-all hover:bg-white/10 hover:text-white/80"
+                      onClick={() => downloadDoc(r.doc_id, r.file)}
+                      title="下载原文核对"
+                    >
+                      下载原文
+                    </button>
+                  </div>
+                  <div className="mt-1.5 whitespace-pre-wrap text-[11px] leading-relaxed text-white/55">
+                    {r.snippet}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </HoloCard>
+
+      {/* 检索诊断 */}
+      <HoloCard className="p-6">
+        <SectionTitle className="!mb-0">检索诊断（仅检索，不调用大模型）</SectionTitle>
+        <div className="mt-4 flex flex-col gap-3 md:flex-row">
+          <HoloTextarea
+            className="flex-1"
+            rows={2}
+            placeholder="输入关键词，检查知识库能否命中相关资料，如：坏账准备 计提比例"
+            value={dbgQ}
+            onChange={(e) => setDbgQ(e.target.value)}
+          />
+          <div className="flex flex-row items-end gap-2">
+            <div className="flex flex-col gap-1">
+              <span className="text-[11px] text-white/40">Top N</span>
+              <HoloSelect className="w-[76px]" value={dbgK} onChange={(e) => setDbgK(Number(e.target.value))}>
+                {[3, 5, 8, 10].map((n) => (
+                  <option key={n} value={n}>{n}</option>
+              ))}
+              </HoloSelect>
+            </div>
+            <HoloButton loading={searching} onClick={runSearch} disabled={searching}>
+              🔍 检索
+            </HoloButton>
+          </div>
+        </div>
+
+        {dbg && (
+          <div className="mt-4 space-y-3">
+            <div className="flex flex-wrap items-center gap-2 text-[11px]">
+              <span className="rounded-full border border-cyan-300/25 bg-cyan-400/10 px-2.5 py-0.5 text-cyan-200/90">
+                {MODE_LABEL[dbg.mode] || dbg.mode}
+              </span>
+              <span className="text-white/40">
+                片段 {dbg.stats.chunks} · 向量 {dbg.stats.vectors} · 文档 {dbg.stats.docs}
+              </span>
+              {dbg.query_terms.length > 0 && (
+                <span className="text-white/30">检索词：{dbg.query_terms.join(" / ")}</span>
+              )}
+            </div>
+            {dbg.hits.length === 0 ? (
+              <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-[12px] text-white/45">
+                未命中任何片段：请确认已上传相关文档，或改用资料中的原始表述重试。
+              </div>
+            ) : (
+              dbg.hits.map((h) => (
+                <div key={h.chunk_id} className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+                  <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                    <span className="rounded-md bg-white/10 px-1.5 py-0.5 text-white/60">#{h.rank}</span>
+                    <span className="text-cyan-200/85">
+                      RRF {h.rrf} · BM25 {h.bm25}
+                      {h.cos ? ` · 向量 ${h.cos}` : ""}
+                    </span>
+                    <button
+                      className="ml-auto rounded-lg border border-white/10 px-2 py-0.5 text-white/50 transition-all hover:bg-white/10 hover:text-white/80"
+                      onClick={() => downloadDoc(h.doc_id, h.file)}
+                      title="下载原文核对"
+                    >
+                      📄 {h.file}
+                    </button>
+                  </div>
+                  <div className="mt-1 text-[11px] text-white/35">{h.path || h.section}{h.loc ? ` · ${h.loc}` : ""}</div>
+                  <div className="mt-2 whitespace-pre-wrap text-[12px] leading-relaxed text-white/65">{h.text}</div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
       </HoloCard>
 
       {/* 问答 */}
@@ -293,7 +581,7 @@ export default function KbPage() {
                   <span className="text-sm font-semibold text-white/90">Q{i + 1}</span>
                   <span className="text-[13px] text-white/85">{item.q}</span>
                   <span className="ml-auto shrink-0 text-[11px] text-white/35">
-                    {item.resp.embed_used ? "向量+BM25" : "BM25"} · {item.resp.elapsed.toFixed(1)}s
+                    {MODE_LABEL[item.resp.mode || "bm25"] || "BM25"} · {item.resp.elapsed.toFixed(1)}s
                   </span>
                 </div>
                 <div className="mt-2 whitespace-pre-wrap text-[13px] leading-relaxed text-white/75">
@@ -306,7 +594,7 @@ export default function KbPage() {
                         key={j}
                         className="rounded-full border border-[var(--border-accent-soft)] bg-white/[0.04] px-2.5 py-1 text-[11px] text-cyan-200/90 transition-all hover:bg-white/[0.1]"
                         onClick={() => downloadDoc(s.doc_id, s.file)}
-                        title={`${s.section}\n${s.snippet ?? ""}\n（点击下载原文核对）`}
+                        title={`${s.path || s.section}${s.loc ? `\n${s.loc}` : ""}\n${s.snippet ?? ""}\n（点击下载原文核对）`}
                       >
                         📄 {s.file} · {s.section}
                       </button>

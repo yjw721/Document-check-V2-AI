@@ -693,7 +693,12 @@ class ReportBuilder:
                         f"{ai_rec.get('min_confidence', 0.6)} 的问题丢弃）"
                         if ai_rec.get("strict_grounding") else "关闭"),
             ("参考资料", "已携带" if ai_rec.get("ref_enabled") else "未携带"),
-            ("知识库 RAG", "已启用" if ai_rec.get("kb_enabled") else "未启用"),
+            ("知识库 RAG", (
+                "已启用 · 知识库 {0} 个文档 / {1} 个片段 · 每片段注入 {2} 段 · {3}".format(
+                    ai_rec.get("kb_docs", 0), ai_rec.get("kb_chunks", 0),
+                    ai_rec.get("kb_top_k", 3),
+                    "向量+BM25 混合检索" if ai_rec.get("kb_embed") else "BM25 检索",
+                )) if ai_rec.get("kb_enabled") else "未启用"),
             ("记录时间", str(ai_rec.get("recorded_at") or self.now.strftime("%Y-%m-%d %H:%M:%S"))),
         ]
         _active_skills = ai_rec.get("active_skills") or []
