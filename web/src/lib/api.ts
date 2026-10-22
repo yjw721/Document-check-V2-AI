@@ -29,6 +29,7 @@ import type {
   KbVerifyPreviewResp,
   KbTreeNode,
   KbFolder,
+  KbGraphResp,
   KbPermissions,
   KbParserStatus,
   OverviewData,
@@ -373,6 +374,10 @@ export const api = {
 
   /* 解析能力 / 向量后端 */
   kbParsers: () => request<KbParserStatus>("GET", "/api/rag/parsers"),
+
+  /* 思维图谱 */
+  kbGraph: (folder = "", include_sub = true) =>
+    request<KbGraphResp>("GET", `/api/rag/graph?folder=${encodeURIComponent(folder)}&include_sub=${include_sub ? 1 : 0}`),
 
   /* ---------- 报告 ---------- */
   report: (body: { operator: string; org: string; include_cover: boolean; report_filter?: "all" | "fluency" }) =>

@@ -8,11 +8,14 @@ import SectionTitle from "../components/common/SectionTitle";
 import EmptyState from "../components/common/EmptyState";
 import { api } from "../lib/api";
 import { useToast } from "../components/ui/Toast";
+import KnowledgeGraph from "../components/kb/KnowledgeGraph";
 import type {
   KbAskResp,
   KbConfig,
   KbDoc,
   KbFolder,
+  KbGraphNode,
+  KbGraphResp,
   KbPermissions,
   KbSearchResp,
   KbStatus,
@@ -59,6 +62,95 @@ function fmtTime(s?: string) {
 interface Qa {
   q: string;
   resp: KbAskResp;
+}
+
+/* 图谱选中节点详情 */
+function GraphDetail({
+  graph,
+  sel,
+  onPick,
+  onClose,
+}: {
+  graph: KbGraphResp;
+  sel: KbGraphNode | null;
+  onPick: (id: string) => void;
+  onClose: () => void;
+}) {
+  if (!sel) {
+    return (
+      <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-[12px] leading-relaxed text-white/45">
+        点击图谱中的任意节点查看详情：章节路径、所属文档、包含段落数与样例文本，以及与之
+        <span className="text-cyan-200/70">概念关联</span>的其它章节（基于向量语义相似或关键词共现）。
+      </div>
+    );
+  }
+  const related = graph.edges
+    .filter((e) => e.kind === "related" && (e.source === sel.id || e.target === sel.id))
+    .map((e) => {
+      const oid = e.source === sel.id ? e.target : e.source;
+      const other = graph.nodes.find((n) => n.id === oid);
+      return other ? { node: other, w: e.weight } : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => b!.w - a!.w) as { node: KbGraphNode; w: number }[];
+  const docLabels = (sel.doc_ids || [])
+    .map((did) => graph.nodes.find((n) => n.id === `doc:${did}`)?.label || did);
+
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="text-[13px] font-medium text-white/90">{sel.label}</div>
+          <div className="mt-0.5 text-[11px] text-white/45">
+            {sel.type === "doc" ? "文档" : `章节 · 层级 ${sel.level}`} · {sel.chunks} 段
+            {sel.rel_count > 0 && ` · ${sel.rel_count} 条关联`}
+          </div>
+        </div>
+        <button
+          className="rounded-md px-1.5 text-white/40 transition-all hover:text-white/80"
+          onClick={onClose}
+          title="关闭"
+        >
+          ✕
+        </button>
+      </div>
+      {sel.full_path !== sel.label && (
+        <div className="mt-2 break-words text-[11px] text-white/40">{sel.full_path}</div>
+      )}
+      <div className="mt-2 max-h-[180px] overflow-y-auto rounded-xl border border-white/10 bg-black/20 p-2 text-[11px] leading-relaxed text-white/70">
+        {sel.sample || "（无样例文本）"}
+      </div>
+      {docLabels.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1 text-[11px] text-white/45">
+          <span className="text-white/35">所属文档：</span>
+          {docLabels.map((d, i) => (
+            <span key={i} className="rounded bg-white/10 px-1.5 py-0.5 text-white/60">
+              {d}
+            </span>
+          ))}
+        </div>
+      )}
+      {related.length > 0 && (
+        <>
+          <div className="mb-1 mt-3 text-[11px] font-medium text-white/55">
+            概念关联（{related.length}）
+          </div>
+          <div className="flex flex-col gap-1">
+            {related.map((r) => (
+              <button
+                key={r.node.id}
+                onClick={() => onPick(r.node.id)}
+                className="flex items-center gap-2 rounded-lg border border-white/10 px-2 py-1 text-left text-[11px] text-white/65 transition-all hover:bg-white/10 hover:text-white/90"
+              >
+                <span className="flex-1 truncate">{r.node.label}</span>
+                <span className="text-[10px] text-cyan-200/70">{r.w.toFixed(2)}</span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
 }
 
 /* 递归渲染目录树 */
@@ -162,6 +254,13 @@ export default function KbPage() {
   const settingsRef = useRef<SettingsData | null>(null);
   const [saving, setSaving] = useState(false);
 
+  /* 思维图谱 */
+  const [graph, setGraph] = useState<KbGraphResp | null>(null);
+  const [graphLoading, setGraphLoading] = useState(false);
+  const [graphCurOnly, setGraphCurOnly] = useState(false);
+  const [showRelated] = useState(true);
+  const [selNode, setSelNode] = useState<KbGraphNode | null>(null);
+
   const loadStatus = useCallback(() => {
     api
       .kbStatus()
@@ -200,6 +299,24 @@ export default function KbPage() {
       })
       .catch(() => {});
   }, [load, loadPerms]);
+
+  /* 思维图谱：随「仅当前目录」开关与目录选择刷新 */
+  const loadGraph = useCallback(async () => {
+    setGraphLoading(true);
+    try {
+      const g = await api.kbGraph(graphCurOnly ? curFolder : "", graphCurOnly ? includeSub : true);
+      setGraph(g);
+      setSelNode(null);
+    } catch (e) {
+      toast((e as Error).message, "err");
+    } finally {
+      setGraphLoading(false);
+    }
+  }, [graphCurOnly, curFolder, includeSub]);
+
+  useEffect(() => {
+    loadGraph();
+  }, [loadGraph]);
 
   const commitKbSetting = async (patch: Partial<SettingsData["ai"]>, msg: string) => {
     const cur = settingsRef.current;
@@ -669,6 +786,60 @@ export default function KbPage() {
           )}
         </HoloCard>
       </div>
+
+      {/* 思维图谱 */}
+      <HoloCard className="p-6">
+        <div className="mb-3 flex flex-wrap items-center gap-3">
+          <SectionTitle className="!mb-0">知识思维图谱</SectionTitle>
+          <span className="text-[11px] text-white/40">文档 → 章节层级 + 跨章节概念关联</span>
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <label className="flex items-center gap-1.5 text-[11px] text-white/55">
+              <input
+                type="checkbox"
+                className="accent-[var(--accent-ink)]"
+                checked={graphCurOnly}
+                onChange={(e) => setGraphCurOnly(e.target.checked)}
+              />
+              仅当前目录
+            </label>
+            {graph?.stats && (
+              <span className="rounded-lg border border-white/10 px-2 py-0.5 text-[11px] text-white/50">
+                {graph.stats.nodes} 节点 · {graph.stats.edges} 边 · 关联 {graph.stats.related}
+                {graph.stats.has_vectors ? "" : " · 关键词共现"}
+              </span>
+            )}
+            <HoloButton variant="ghost" size="sm" loading={graphLoading} onClick={loadGraph}>
+              ↻ 重新生成
+            </HoloButton>
+          </div>
+        </div>
+
+        {graphLoading && !graph ? (
+          <div className="flex h-[520px] items-center justify-center text-[12px] text-white/40">
+            图谱生成中…
+          </div>
+        ) : graph && graph.nodes.length ? (
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_300px]">
+            <KnowledgeGraph
+              data={graph}
+              selectedId={selNode?.id}
+              onSelect={setSelNode}
+              showRelated={showRelated}
+            />
+            <GraphDetail
+              graph={graph}
+              sel={selNode}
+              onPick={(id) => {
+                const n = graph.nodes.find((x) => x.id === id);
+                if (n) setSelNode(n);
+              }}
+              onClose={() => setSelNode(null)}
+            />
+          </div>
+        ) : (
+          <EmptyState text={graph?.message || "暂无可用图谱，请先上传文档并建立索引"} icon="🕸️" />
+        )}
+      </HoloCard>
 
       {/* 检索诊断 */}
       <HoloCard className="p-6">

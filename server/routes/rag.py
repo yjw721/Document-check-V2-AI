@@ -81,6 +81,7 @@ from checkers.rag_store import (
     kb_permissions as rag_permissions,
     save_kb_permissions as rag_save_permissions,
     parser_status as rag_parser_status,
+    kb_graph as rag_graph,
 )
 from checkers.rag.permissions import require as _require_cap
 
@@ -414,6 +415,23 @@ def api_rag_file(doc_id: str):
         ".csv": "text/csv; charset=utf-8",
     }.get(ext, "application/octet-stream")
     return FileResponse(p, filename=base, media_type=media)
+
+
+# ---------------------------------------------------------------------------
+# 思维图谱
+# ---------------------------------------------------------------------------
+@router.get("/api/rag/graph", dependencies=[_require_cap("kb.view")])
+def api_rag_graph(folder: str = "", include_sub: bool = True):
+    """知识库思维图谱：文档 / 章节节点 + 结构边 + 关联边（语义相似或关键词共现）。
+
+    可选 ``folder``：仅统计该目录下的文档；``include_sub=false`` 时不含子目录。
+    """
+    try:
+        return rag_graph(str(folder or "").strip(), bool(include_sub))
+    except Exception as exc:  # noqa: BLE001 - 图谱构建异常不应拖垮页面其他部分
+        return {"ok": False, "nodes": [], "edges": [],
+                "stats": {"docs": 0, "sections": 0, "related": 0},
+                "message": f"图谱构建失败：{exc}"}
 
 
 # ---------------------------------------------------------------------------

@@ -913,6 +913,43 @@ export interface KbStatus {
   backends?: KbBackendInfo[];
   parsers?: KbParserStatus;
 }
+/* 思维图谱 */
+export interface KbGraphNode {
+  id: string;
+  type: "doc" | "sec";
+  label: string;
+  name?: string;
+  doc_id?: string;
+  full_path: string;
+  level: number;
+  chunks: number;
+  size?: number;
+  sample: string;
+  rel_count: number;
+  doc_ids?: string[];
+}
+export interface KbGraphEdge {
+  source: string;
+  target: string;
+  kind: "hierarchy" | "related";
+  weight: number;
+}
+export interface KbGraphStats {
+  docs: number;
+  sections: number;
+  related: number;
+  hierarchy: number;
+  has_vectors: boolean;
+  nodes: number;
+  edges: number;
+}
+export interface KbGraphResp {
+  ok: boolean;
+  nodes: KbGraphNode[];
+  edges: KbGraphEdge[];
+  stats: KbGraphStats;
+  message?: string;
+}
 export interface KbSource {
   file: string;
   section: string;
