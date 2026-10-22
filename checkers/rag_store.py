@@ -35,6 +35,7 @@ from checkers.rag import permissions as permissions
 from checkers.rag import stores as stores
 from checkers.rag import tree as tree
 from checkers.rag import graph as graph
+from checkers.rag import records as records
 from checkers.rag.bm25 import BM25Index as BM25Index
 from checkers.rag.text import (
     CHUNK_OVERLAP,
@@ -131,6 +132,14 @@ move_docs = tree.move_docs
 folder_doc_ids = tree.docs_in_subtree
 kb_graph = graph.build_graph
 
+# 检索 / 问答使用记录（逐条 + 整体管理）
+kb_records_add = records.add_record
+kb_records_list = records.list_records
+kb_records_get = records.get_record
+kb_records_delete = records.delete_record
+kb_records_clear = records.clear_records
+kb_records_export = records.export_records
+
 # ---------------------------------------------------------------------------
 # 权限
 # ---------------------------------------------------------------------------
@@ -158,9 +167,11 @@ __all__ = [
     "is_heading", "kb_config", "kb_graph", "kb_permissions", "kb_status", "kb_tree",
     "list_folders", "load_index", "load_kb", "move_docs", "move_folder",
     "pack_hits", "parser_status", "prune_query", "rebuild_index",
-    "reindex_doc", "rename_folder", "require_cap", "reset_store",
+    "reindex_doc", "rename_folder",     "require_cap", "reset_store",
     "retrieve", "retrieve_for_verify", "role_can", "save_kb",
     "save_kb_config", "save_kb_permissions", "search_debug",
     "supported_exts", "tokenize", "pack_hits", "embed_many", "embed_status",
     "resolve_embed_model", "stores", "tree", "permissions", "parsers", "graph",
+    "records", "kb_records_add", "kb_records_list", "kb_records_get",
+    "kb_records_delete", "kb_records_clear", "kb_records_export",
 ]

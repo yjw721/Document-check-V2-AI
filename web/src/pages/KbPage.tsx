@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import HoloCard from "../components/ui/HoloCard";
 import HoloButton from "../components/ui/HoloButton";
 import HoloBadge from "../components/ui/HoloBadge";
-import { HoloSelect, HoloTextarea } from "../components/ui/HoloInput";
+import { HoloInput, HoloSelect, HoloTextarea } from "../components/ui/HoloInput";
 import HoloSwitch from "../components/ui/HoloSwitch";
 import SectionTitle from "../components/common/SectionTitle";
 import EmptyState from "../components/common/EmptyState";
@@ -17,6 +17,9 @@ import type {
   KbGraphNode,
   KbGraphResp,
   KbPermissions,
+  KbRecord,
+  KbRecordType,
+  KbRecordStats,
   KbSearchResp,
   KbStatus,
   KbTreeNode,
@@ -235,6 +238,19 @@ export default function KbPage() {
   /* 检索诊断 */
   const [dbgQ, setDbgQ] = useState("");
   const [dbgK, setDbgK] = useState(5);
+
+  /* 检索 / 问答使用记录（逐条 + 整体管理） */
+  const [recs, setRecs] = useState<KbRecord[]>([]);
+  const [recTotal, setRecTotal] = useState(0);
+  const [recStats, setRecStats] = useState<KbRecordStats>({ total: 0, ask: 0, search: 0 });
+  const [recLoading, setRecLoading] = useState(false);
+  const [recType, setRecType] = useState<"" | KbRecordType>("");
+  const [recKw, setRecKw] = useState("");
+  const [recOffset, setRecOffset] = useState(0);
+  const [recDetail, setRecDetail] = useState<KbRecord | null>(null);
+  const REC_LIMIT = 15;
+  const recPage = Math.floor(recOffset / REC_LIMIT) + 1;
+  const recPageTotal = Math.max(1, Math.ceil(recTotal / REC_LIMIT));
   const [searching, setSearching] = useState(false);
   const [dbg, setDbg] = useState<KbSearchResp | null>(null);
 
@@ -489,6 +505,134 @@ export default function KbPage() {
     } finally {
       setSearching(false);
     }
+  };
+
+  /* ---------- 检索 / 问答记录：加载、筛选、删除、清空、导出、重跑 ---------- */
+  const loadRecs = useCallback(async () => {
+    setRecLoading(true);
+    try {
+      const r = await api.kbRecords({
+        type: recType,
+        keyword: recKw || undefined,
+        limit: REC_LIMIT,
+        offset: recOffset,
+      });
+      if (r.ok) {
+        setRecs(r.items);
+        setRecTotal(r.total);
+        setRecStats(r.stats);
+      }
+    } catch (ex) {
+      toast((ex as Error).message, "err");
+    } finally {
+      setRecLoading(false);
+    }
+  }, [recType, recKw, recOffset]);
+
+  useEffect(() => {
+    loadRecs();
+  }, [loadRecs]);
+
+  const openDetail = async (id: string) => {
+    try {
+      const r = await api.kbRecord(id);
+      if (r.ok) setRecDetail(r as KbRecord);
+    } catch (ex) {
+      toast((ex as Error).message, "err");
+    }
+  };
+
+  const deleteRecord = async (id: string, closeAfter = false) => {
+    if (!confirm("确定删除这条记录？此操作不可恢复。")) return;
+    try {
+      const r = await api.kbRecordDelete(id);
+      if (r.ok) {
+        if (closeAfter) setRecDetail(null);
+        loadRecs();
+        toast("已删除该记录");
+      }
+    } catch (ex) {
+      toast((ex as Error).message, "err");
+    }
+  };
+
+  const clearRecs = async () => {
+    const label = recType ? (recType === "ask" ? "问答" : "检索") : "全部";
+    if (!confirm(`确定清空${label}记录？此操作不可恢复。`)) return;
+    try {
+      const r = await api.kbRecordsClear(recType || undefined);
+      if (r.ok) {
+        setRecOffset(0);
+        loadRecs();
+        toast(`已清空${label}记录`);
+      }
+    } catch (ex) {
+      toast((ex as Error).message, "err");
+    }
+  };
+
+  const exportRecs = async (fmt: "json" | "md") => {
+    try {
+      const r = await api.kbRecordsExport({
+        type: recType || undefined,
+        keyword: recKw || undefined,
+        fmt,
+      });
+      if (r.ok) {
+        downloadText(r.content, r.filename, fmt === "md" ? "text/markdown" : "application/json");
+        toast(`已导出 ${r.filename}`);
+      }
+    } catch (ex) {
+      toast((ex as Error).message, "err");
+    }
+  };
+
+  const rerunAsk = async (rec: KbRecord) => {
+    const q = rec.query;
+    if (q.length < 2) {
+      toast("记录中的问题为空", "err");
+      return;
+    }
+    setAsking(true);
+    try {
+      const resp = await api.kbAsk({ question: q, top_k: rec.params.top_k || 3, folder: curFolder || undefined });
+      setQa((list) => [{ q, resp }, ...list].slice(0, 20));
+      toast("已重新提问，结果见「知识库问答」");
+    } catch (ex) {
+      toast((ex as Error).message, "err");
+    } finally {
+      setAsking(false);
+    }
+  };
+
+  const rerunSearch = async (rec: KbRecord) => {
+    const q = rec.query;
+    if (q.length < 2) {
+      toast("记录中的检索词为空", "err");
+      return;
+    }
+    setSearching(true);
+    try {
+      setDbg(
+        await api.kbSearch({
+          question: q,
+          top_k: rec.params.top_k || 5,
+          folder: includeSub && curFolder ? curFolder : undefined,
+        }),
+      );
+      toast("已重新检索，结果见「检索诊断」");
+    } catch (ex) {
+      toast((ex as Error).message, "err");
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const goPrevPage = () => {
+    if (recOffset >= REC_LIMIT) setRecOffset(recOffset - REC_LIMIT);
+  };
+  const goNextPage = () => {
+    if (recOffset + REC_LIMIT < recTotal) setRecOffset(recOffset + REC_LIMIT);
   };
 
   const saveCfg = async (patch: Partial<KbConfig>) => {
@@ -1010,6 +1154,104 @@ export default function KbPage() {
         )}
       </HoloCard>
 
+      {/* 检索与问答记录（逐条 + 整体管理） */}
+      <HoloCard className="p-6">
+        <SectionTitle className="!mb-0">检索与问答记录</SectionTitle>
+        <div className="mt-1 text-[11px] text-white/35">
+          自动留存每次「检索诊断」与「知识库问答」，支持逐条查看 / 删除 / 重新执行 / 导出，以及整体筛选、统计、清空与导出。
+        </div>
+
+        {/* 工具栏：筛选 + 整体操作 */}
+        <div className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-center">
+          <div className="flex flex-wrap items-center gap-2">
+            <HoloSelect
+              value={recType}
+              onChange={(e) => {
+                setRecType(e.target.value as "" | KbRecordType);
+                setRecOffset(0);
+              }}
+            >
+              <option value="">全部类型</option>
+              <option value="ask">问答</option>
+              <option value="search">检索</option>
+            </HoloSelect>
+            <HoloInput
+              className="w-56"
+              placeholder="按问题 / 检索词筛选"
+              value={recKw}
+              onChange={(e) => setRecKw(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") setRecOffset(0);
+              }}
+            />
+            <HoloButton variant="primary" onClick={() => setRecOffset(0)}>
+              筛选
+            </HoloButton>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 lg:ml-auto">
+            <span className="text-[11px] text-white/40">
+              共 {recStats.total} 条 · 问答 {recStats.ask} · 检索 {recStats.search}
+            </span>
+            <HoloButton onClick={() => exportRecs("json")}>导出 JSON</HoloButton>
+            <HoloButton onClick={() => exportRecs("md")}>导出 Markdown</HoloButton>
+            <HoloButton
+              variant="danger"
+              onClick={clearRecs}
+            >
+              清空{recType ? (recType === "ask" ? "问答" : "检索") : "全部"}
+            </HoloButton>
+          </div>
+        </div>
+
+        {/* 列表 */}
+        <div className="mt-4 space-y-2">
+          {recLoading ? (
+            <div className="text-[12px] text-white/40">加载中…</div>
+          ) : recs.length === 0 ? (
+            <EmptyState text="暂无记录：在「检索诊断」或「知识库问答」中发起查询后，会自动留存到这里。" />
+          ) : (
+            recs.map((rec) => (
+              <RecordRow
+                key={rec.id}
+                rec={rec}
+                onDetail={openDetail}
+                onDelete={(id) => deleteRecord(id)}
+                onRerun={rec.type === "ask" ? rerunAsk : rerunSearch}
+              />
+            ))
+          )}
+        </div>
+
+        {/* 分页 */}
+        {recTotal > REC_LIMIT && (
+          <div className="mt-4 flex items-center justify-between text-[11px] text-white/45">
+            <span>
+              第 {recPage} / {recPageTotal} 页 · 共 {recTotal} 条
+            </span>
+            <div className="flex gap-2">
+              <HoloButton disabled={recOffset <= 0} onClick={goPrevPage}>
+                上一页
+              </HoloButton>
+              <HoloButton disabled={recOffset + REC_LIMIT >= recTotal} onClick={goNextPage}>
+                下一页
+              </HoloButton>
+            </div>
+          </div>
+        )}
+      </HoloCard>
+
+      {recDetail && (
+        <RecordDetailModal
+          rec={recDetail}
+          onClose={() => setRecDetail(null)}
+          onRerun={(r) => {
+            (r.type === "ask" ? rerunAsk : rerunSearch)(r);
+            setRecDetail(null);
+          }}
+          onDelete={(id) => deleteRecord(id, true)}
+        />
+      )}
+
       {/* 与核验流程打通 */}
       <HoloCard className="p-6">
         <SectionTitle className="!mb-0">与检测 / AI 核验流程打通</SectionTitle>
@@ -1284,6 +1526,211 @@ export default function KbPage() {
           </div>
         </HoloCard>
       )}
+    </div>
+  );
+}
+
+/* ---------- 检索 / 问答记录：单条行 + 详情弹窗 ---------- */
+function downloadText(content: string, filename: string, mime: string) {
+  const blob = new Blob([content], { type: `${mime};charset=utf-8` });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function RecordRow({
+  rec,
+  onDetail,
+  onDelete,
+  onRerun,
+}: {
+  rec: KbRecord;
+  onDetail: (id: string) => void;
+  onDelete: (id: string) => void;
+  onRerun: (rec: KbRecord) => void;
+}) {
+  const s = rec.summary;
+  const isAsk = rec.type === "ask";
+  const conf = Math.round((s.confidence ?? 0) * 100);
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <HoloBadge tone={isAsk ? "accent" : "gray"}>{isAsk ? "问答" : "检索"}</HoloBadge>
+        <span className="text-[11px] text-white/40">{rec.created_at}</span>
+        {isAsk ? (
+          <span className="flex flex-wrap items-center gap-1.5 text-[11px]">
+            {s.refused ? (
+              <HoloBadge tone="warn">资料不足·已拒答</HoloBadge>
+            ) : (
+              <HoloBadge tone={s.grounded ? "ok" : "danger"}>{s.grounded ? "可溯源" : "可疑引用"}</HoloBadge>
+            )}
+            <span className="text-white/40">可信度 {conf}%</span>
+            <span className="text-white/40">来源 {s.sources_count ?? 0}</span>
+            {s.elapsed != null && <span className="text-white/30">{s.elapsed}s</span>}
+          </span>
+        ) : (
+          <span className="flex flex-wrap items-center gap-1.5 text-[11px] text-white/40">
+            <span>命中 {s.hits_count ?? 0} 段</span>
+            <span>· 模式 {MODE_LABEL[s.mode || ""] || s.mode || "-"}</span>
+            {s.top_file && <span>· 最佳 {s.top_file}</span>}
+          </span>
+        )}
+        {s.has_error && <HoloBadge tone="danger">执行出错</HoloBadge>}
+        <div className="ml-auto flex gap-1.5">
+          <button
+            onClick={() => onRerun(rec)}
+            className="rounded-lg border border-white/10 px-2 py-0.5 text-[11px] text-white/55 transition-all hover:bg-white/10 hover:text-white/80"
+          >
+            重新执行
+          </button>
+          <button
+            onClick={() => onDetail(rec.id)}
+            className="rounded-lg border border-white/10 px-2 py-0.5 text-[11px] text-white/55 transition-all hover:bg-white/10 hover:text-white/80"
+          >
+            详情
+          </button>
+          <button
+            onClick={() => onDelete(rec.id)}
+            className="rounded-lg border border-white/10 px-2 py-0.5 text-[11px] text-rose-300/80 transition-all hover:bg-rose-500/10"
+          >
+            删除
+          </button>
+        </div>
+      </div>
+      <div className="mt-1.5 truncate text-[13px] text-white/80" title={rec.query}>
+        {rec.query || "（空查询）"}
+      </div>
+    </div>
+  );
+}
+
+function RecordDetailModal({
+  rec,
+  onClose,
+  onRerun,
+  onDelete,
+}: {
+  rec: KbRecord;
+  onClose: () => void;
+  onRerun: (rec: KbRecord) => void;
+  onDelete: (id: string) => void;
+}) {
+  const isAsk = rec.type === "ask";
+  const s = rec.summary;
+  const res = (rec.result || {}) as KbAskResp & KbSearchResp & Record<string, any>;
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="max-h-[88vh] w-full max-w-3xl overflow-auto rounded-3xl border border-white/15 bg-[#14122b] p-6 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <HoloBadge tone={isAsk ? "accent" : "gray"}>{isAsk ? "知识库问答" : "检索诊断"}</HoloBadge>
+          <span className="text-[11px] text-white/40">
+            {rec.created_at} · {rec.id}
+          </span>
+          <div className="ml-auto flex gap-1.5">
+            <button
+              onClick={() => onRerun(rec)}
+              className="rounded-lg border border-white/15 px-2.5 py-1 text-[12px] text-white/70 transition-all hover:bg-white/10"
+            >
+              重新执行
+            </button>
+            <button
+              onClick={() => onDelete(rec.id)}
+              className="rounded-lg border border-rose-400/30 px-2.5 py-1 text-[12px] text-rose-300/80 transition-all hover:bg-rose-500/10"
+            >
+              删除
+            </button>
+            <button
+              onClick={onClose}
+              className="rounded-lg border border-white/15 px-2.5 py-1 text-[12px] text-white/70 transition-all hover:bg-white/10"
+            >
+              关闭
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-3 rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+          <div className="text-[11px] text-white/40">问题 / 检索词</div>
+          <div className="mt-1 text-[14px] text-white/90">{rec.query || "（空）"}</div>
+          <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-white/45">
+            <span>Top K：{rec.params.top_k ?? "-"}</span>
+            <span>范围：{rec.params.scope || "全库"}</span>
+          </div>
+        </div>
+
+        {isAsk ? (
+          <div className="mt-3 space-y-3">
+            <div className="flex flex-wrap items-center gap-2 text-[11px]">
+              <HoloBadge tone={s.grounded ? "ok" : "danger"}>
+                {s.grounded ? "引用可溯源" : "存在可疑引用"}
+              </HoloBadge>
+              <HoloBadge tone="gray">可信度 {Math.round((s.confidence ?? 0) * 100)}%</HoloBadge>
+              {s.refused && <HoloBadge tone="warn">资料不足·已拒答</HoloBadge>}
+            </div>
+            <div className="whitespace-pre-wrap text-[13px] leading-relaxed text-white/80">{res.answer}</div>
+            {s.has_error && res.error && (
+              <div className="rounded-xl border border-rose-400/25 bg-rose-400/[0.07] px-3 py-2 text-[11px] text-rose-200/85">
+                ⚠️ {res.error}
+              </div>
+            )}
+            {Array.isArray(res.sources) && res.sources.length > 0 && (
+              <div>
+                <div className="mb-1 text-[11px] text-white/45">来源（{res.sources.length}）</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {res.sources.map((src: any, j: number) => (
+                    <span
+                      key={j}
+                      className="rounded-full border border-[var(--border-accent-soft)] bg-white/[0.04] px-2.5 py-1 text-[11px] text-cyan-200/90"
+                    >
+                      {src.file} · {src.section}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="mt-3 space-y-2">
+            <div className="flex flex-wrap items-center gap-2 text-[11px] text-white/45">
+              <HoloBadge tone="gray">模式 {MODE_LABEL[res.mode || ""] || res.mode || "-"}</HoloBadge>
+              <span>命中 {Array.isArray(res.hits) ? res.hits.length : 0} 段</span>
+            </div>
+            {Array.isArray(res.hits) && res.hits.length > 0 ? (
+              res.hits.map((h: any) => (
+                <div key={h.chunk_id} className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+                  <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                    <span className="rounded-md bg-white/10 px-1.5 py-0.5 text-white/60">#{h.rank}</span>
+                    <span className="text-cyan-200/85">
+                      RRF {h.rrf} · BM25 {h.bm25}
+                      {h.cos ? ` · 向量 ${h.cos}` : ""}
+                    </span>
+                    <span className="ml-auto text-white/45">{h.file}</span>
+                  </div>
+                  <div className="mt-1 text-[11px] text-white/35">
+                    {h.path || h.section}
+                    {h.loc ? ` · ${h.loc}` : ""}
+                  </div>
+                  <div className="mt-2 whitespace-pre-wrap text-[12px] leading-relaxed text-white/65">{h.text}</div>
+                </div>
+              ))
+            ) : (
+              <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-[12px] text-white/45">
+                未命中任何片段。
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

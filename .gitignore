@@ -39,6 +39,8 @@ Thumbs.db
 # 知识库运行时数据（向量库 / 原文 / 恢复备份，仅存本机）
 config/knowledge/chroma/
 config/knowledge/files/
+config/knowledge/records.json
+config/knowledge/records.json.tmp
 config/knowledge/*.json.*
 config/knowledge/knowledge.json.git_baseline_backup
 .tmp_*

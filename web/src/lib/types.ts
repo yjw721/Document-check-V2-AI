@@ -1088,3 +1088,66 @@ export interface KbVerifyPreviewResp {
   refs: KbSource[];
   hits: { chunk_id: string; file: string; path: string; score: number; rank: number }[];
 }
+
+/* ---------- 检索 / 问答使用记录（逐条 + 整体管理） ---------- */
+export type KbRecordType = "ask" | "search";
+
+export interface KbRecordSummary {
+  answer_preview?: string;
+  sources_count?: number;
+  grounded?: boolean;
+  refused?: boolean;
+  confidence?: number;
+  elapsed?: number;
+  has_error?: boolean;
+  hits_count?: number;
+  mode?: string;
+  top_file?: string | null;
+  top_section?: string | null;
+  max_cos?: number;
+}
+
+export interface KbRecordParams {
+  top_k?: number;
+  scope?: string;
+  [k: string]: unknown;
+}
+
+export interface KbRecord {
+  id: string;
+  type: KbRecordType;
+  ts: number;
+  created_at: string;
+  query: string;
+  params: KbRecordParams;
+  summary: KbRecordSummary;
+  result?: KbAskResp | KbSearchResp | Record<string, unknown>;
+}
+
+export interface KbRecordStats {
+  total: number;
+  ask: number;
+  search: number;
+  latest?: string;
+  earliest?: string;
+}
+
+export interface KbRecordListResp {
+  ok: boolean;
+  items: KbRecord[];
+  total: number;
+  limit: number;
+  offset: number;
+  stats: KbRecordStats;
+}
+
+export interface KbRecordDetailResp extends KbRecord {
+  ok: boolean;
+}
+
+export interface KbRecordExportResp {
+  ok: boolean;
+  format: string;
+  content: string;
+  filename: string;
+}

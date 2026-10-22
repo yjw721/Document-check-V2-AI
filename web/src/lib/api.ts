@@ -31,6 +31,10 @@ import type {
   KbFolder,
   KbGraphResp,
   KbPermissions,
+  KbRecordType,
+  KbRecordListResp,
+  KbRecordDetailResp,
+  KbRecordExportResp,
   KbParserStatus,
   OverviewData,
   RulesData,
@@ -378,6 +382,41 @@ export const api = {
   /* 思维图谱 */
   kbGraph: (folder = "", include_sub = true) =>
     request<KbGraphResp>("GET", `/api/rag/graph?folder=${encodeURIComponent(folder)}&include_sub=${include_sub ? 1 : 0}`),
+
+  /* 检索 / 问答使用记录（逐条 + 整体管理） */
+  kbRecords: (p?: {
+    type?: KbRecordType | "";
+    keyword?: string;
+    since?: number;
+    until?: number;
+    limit?: number;
+    offset?: number;
+  }) => {
+    const q = new URLSearchParams();
+    if (p?.type) q.set("type", p.type);
+    if (p?.keyword) q.set("keyword", p.keyword);
+    if (p?.since) q.set("since", String(p.since));
+    if (p?.until) q.set("until", String(p.until));
+    if (p?.limit != null) q.set("limit", String(p.limit));
+    if (p?.offset != null) q.set("offset", String(p.offset));
+    const qs = q.toString();
+    return request<KbRecordListResp>("GET", `/api/rag/records${qs ? `?${qs}` : ""}`);
+  },
+  kbRecord: (id: string) => request<KbRecordDetailResp>("GET", `/api/rag/records/${encodeURIComponent(id)}`),
+  kbRecordDelete: (id: string) => request<{ ok: boolean; deleted?: number }>("DELETE", `/api/rag/records/${encodeURIComponent(id)}`),
+  kbRecordsClear: (type?: KbRecordType | "") =>
+    request<{ ok: boolean; cleared_type?: string }>(
+      "DELETE",
+      type ? `/api/rag/records?type=${encodeURIComponent(type)}` : "/api/rag/records",
+    ),
+  kbRecordsExport: (p?: { type?: KbRecordType | ""; keyword?: string; fmt?: "json" | "md" }) => {
+    const q = new URLSearchParams();
+    if (p?.type) q.set("type", p.type);
+    if (p?.keyword) q.set("keyword", p.keyword);
+    if (p?.fmt) q.set("fmt", p.fmt);
+    const qs = q.toString();
+    return request<KbRecordExportResp>("GET", `/api/rag/records/export${qs ? `?${qs}` : ""}`);
+  },
 
   /* ---------- 报告 ---------- */
   report: (body: { operator: string; org: string; include_cover: boolean; report_filter?: "all" | "fluency" }) =>

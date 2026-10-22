@@ -82,6 +82,12 @@ from checkers.rag_store import (
     save_kb_permissions as rag_save_permissions,
     parser_status as rag_parser_status,
     kb_graph as rag_graph,
+    kb_records_add as rag_rec_add,
+    kb_records_list as rag_rec_list,
+    kb_records_get as rag_rec_get,
+    kb_records_delete as rag_rec_del,
+    kb_records_clear as rag_rec_clear,
+    kb_records_export as rag_rec_export,
 )
 from checkers.rag.permissions import require as _require_cap
 
@@ -169,6 +175,7 @@ def api_rag_ask(payload: Dict[str, Any]):
 
     # 目录限定：folder 展开为该子树下的文档 id
     res = rag_ask(question, ai, top_k, _resolve_doc_ids(payload))
+    _capture_ask(question, res, payload, top_k)
     return {"ok": True, **res}
 
 
@@ -186,7 +193,9 @@ def api_rag_search(payload: Dict[str, Any]):
     except (TypeError, ValueError):
         top_k = 5
     ai = (load_settings().get("ai") or {}).copy()
-    return {"ok": True, **rag_search(q, ai, top_k, _resolve_doc_ids(payload))}
+    res = rag_search(q, ai, top_k, _resolve_doc_ids(payload))
+    _capture_search(q, res, payload, top_k)
+    return {"ok": True, **res}
 
 
 def _resolve_doc_ids(payload: Dict[str, Any]) -> Optional[List[str]]:
@@ -203,6 +212,50 @@ def _resolve_doc_ids(payload: Dict[str, Any]) -> Optional[List[str]]:
         except Exception:  # noqa: BLE001 - 目录异常时退化为全库检索
             return None
     return None
+
+
+def _scope_label(payload: Dict[str, Any]) -> str:
+    """把检索范围归纳成人类可读标签。"""
+    if payload.get("doc_ids"):
+        return "指定文档"
+    if payload.get("folder"):
+        return str(payload.get("folder"))
+    return "全库"
+
+
+def _capture_ask(question: str, res: Dict[str, Any], payload: Dict[str, Any], top_k: int) -> None:
+    """结果返回后异步式落盘一条问答记录（异常吞掉，绝不拖慢主流程）。"""
+    try:
+        a = res.get("audit") or {}
+        summary = {
+            "answer_preview": (res.get("answer") or "")[:300],
+            "sources_count": len(res.get("sources") or []),
+            "grounded": bool(a.get("grounded")),
+            "refused": bool(a.get("refused")),
+            "confidence": float(a.get("confidence") or 0.0),
+            "elapsed": res.get("elapsed"),
+            "has_error": bool(res.get("error")),
+        }
+        rag_rec_add("ask", question, {"top_k": top_k, "scope": _scope_label(payload)}, summary, res)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _capture_search(q: str, res: Dict[str, Any], payload: Dict[str, Any], top_k: int) -> None:
+    """结果返回后异步式落盘一条检索记录（异常吞掉，绝不拖慢主流程）。"""
+    try:
+        hits = res.get("hits") or []
+        top = hits[0] if hits else None
+        summary = {
+            "hits_count": len(hits),
+            "mode": res.get("mode"),
+            "top_file": (top or {}).get("file"),
+            "top_section": (top or {}).get("section"),
+            "max_cos": max([float(h.get("cos") or 0.0) for h in hits] or [0.0]),
+        }
+        rag_rec_add("search", q, {"top_k": top_k, "scope": _scope_label(payload)}, summary, res)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 @router.post("/api/rag/verify-preview",
@@ -432,6 +485,42 @@ def api_rag_graph(folder: str = "", include_sub: bool = True):
         return {"ok": False, "nodes": [], "edges": [],
                 "stats": {"docs": 0, "sections": 0, "related": 0},
                 "message": f"图谱构建失败：{exc}"}
+
+
+# ---------------------------------------------------------------------------
+# 检索 / 问答使用记录（逐条 + 整体管理）
+# ---------------------------------------------------------------------------
+@router.get("/api/rag/records", dependencies=[_require_cap("kb.search")])
+def api_rag_records(
+    type: str = "", keyword: str = "", since: int = 0, until: int = 0,
+    limit: int = 50, offset: int = 0,
+):
+    """列出检索 / 问答记录（整体管理：类型 / 关键词筛选 + 分页 + 整体统计）。"""
+    return rag_rec_list(type or None, keyword or None, since or None, until or None, limit, offset)
+
+
+@router.get("/api/rag/records/export", dependencies=[_require_cap("kb.search")])
+def api_rag_records_export(type: str = "", keyword: str = "", fmt: str = "json"):
+    """导出记录为 JSON 或 Markdown（整体管理）。"""
+    return rag_rec_export(type or None, keyword or None, fmt or "json")
+
+
+@router.get("/api/rag/records/{rid}", dependencies=[_require_cap("kb.search")])
+def api_rag_record_get(rid: str):
+    """获取单条记录完整内容（逐条管理：详情）。"""
+    return rag_rec_get(rid)
+
+
+@router.delete("/api/rag/records/{rid}", dependencies=[_require_cap("kb.search")])
+def api_rag_record_delete(rid: str):
+    """删除单条记录（逐条管理）。"""
+    return rag_rec_del(rid)
+
+
+@router.delete("/api/rag/records", dependencies=[_require_cap("kb.search")])
+def api_rag_records_clear(type: str = ""):
+    """清空记录（整体管理）：type 为空清全部，否则按类型清。"""
+    return rag_rec_clear(type or None)
 
 
 # ---------------------------------------------------------------------------
