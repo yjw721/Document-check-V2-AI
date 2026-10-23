@@ -36,6 +36,9 @@ from checkers.ai_checker import (
 )
 from checkers import ai_activity
 from checkers import activity as rule_activity
+from schemas.api_models import (
+    KbRecordListResp, KbRecordDetailResp, KbRecordOpResp, KbRecordExportResp,
+)
 from checkers.ai_builder import (
     build_dialogue as ai_build_dialogue, build_from_doc as ai_build_doc,
     build_from_text as ai_build_text,
@@ -490,7 +493,8 @@ def api_rag_graph(folder: str = "", include_sub: bool = True):
 # ---------------------------------------------------------------------------
 # 检索 / 问答使用记录（逐条 + 整体管理）
 # ---------------------------------------------------------------------------
-@router.get("/api/rag/records", dependencies=[_require_cap("kb.search")])
+@router.get("/api/rag/records", response_model=KbRecordListResp,
+             dependencies=[_require_cap("kb.search")])
 def api_rag_records(
     type: str = "", keyword: str = "", since: int = 0, until: int = 0,
     limit: int = 50, offset: int = 0,
@@ -499,25 +503,29 @@ def api_rag_records(
     return rag_rec_list(type or None, keyword or None, since or None, until or None, limit, offset)
 
 
-@router.get("/api/rag/records/export", dependencies=[_require_cap("kb.search")])
+@router.get("/api/rag/records/export", response_model=KbRecordExportResp,
+             dependencies=[_require_cap("kb.search")])
 def api_rag_records_export(type: str = "", keyword: str = "", fmt: str = "json"):
     """导出记录为 JSON 或 Markdown（整体管理）。"""
     return rag_rec_export(type or None, keyword or None, fmt or "json")
 
 
-@router.get("/api/rag/records/{rid}", dependencies=[_require_cap("kb.search")])
+@router.get("/api/rag/records/{rid}", response_model=KbRecordDetailResp,
+            dependencies=[_require_cap("kb.search")])
 def api_rag_record_get(rid: str):
     """获取单条记录完整内容（逐条管理：详情）。"""
     return rag_rec_get(rid)
 
 
-@router.delete("/api/rag/records/{rid}", dependencies=[_require_cap("kb.delete")])
+@router.delete("/api/rag/records/{rid}", response_model=KbRecordOpResp,
+                dependencies=[_require_cap("kb.delete")])
 def api_rag_record_delete(rid: str):
     """删除单条记录（逐条管理，需删除权限）。"""
     return rag_rec_del(rid)
 
 
-@router.delete("/api/rag/records", dependencies=[_require_cap("kb.delete")])
+@router.delete("/api/rag/records", response_model=KbRecordOpResp,
+                dependencies=[_require_cap("kb.delete")])
 def api_rag_records_clear(type: str = ""):
     """清空记录（整体管理，需删除权限）：type 为空清全部，否则按类型清。"""
     return rag_rec_clear(type or None)

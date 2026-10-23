@@ -588,6 +588,90 @@ class ProcessStage(BaseModel):
     active: bool
 
 
+# ===========================================================================
+# 本地知识库：检索 / 问答使用记录（逐条 + 整体管理）
+# extra="allow" 保留历史 / 新增字段，避免破坏既有前端契约
+# ===========================================================================
+class KbRecordStats(BaseModel):
+    """记录整体统计；latest / earliest 仅在有记录时返回。"""
+    model_config = ConfigDict(extra="allow")
+    total: int = 0
+    ask: int = 0
+    search: int = 0
+    latest: Optional[str] = None
+    earliest: Optional[str] = None
+
+
+class KbRecordListItem(BaseModel):
+    """列表项（不含 result 全文，省流量）。"""
+    model_config = ConfigDict(extra="allow")
+    id: str
+    type: str
+    ts: int = 0
+    created_at: str = ""
+    query: str = ""
+    params: Dict[str, Any] = {}
+    summary: Dict[str, Any] = {}
+
+
+class KbRecordDetail(BaseModel):
+    """单条完整记录（含 result）。"""
+    model_config = ConfigDict(extra="allow")
+    id: str
+    type: str
+    ts: int = 0
+    created_at: str = ""
+    query: str = ""
+    params: Dict[str, Any] = {}
+    summary: Dict[str, Any] = {}
+    result: Dict[str, Any] = {}
+
+
+class KbRecordListResp(BaseModel):
+    """记录列表 + 分页 + 整体统计。"""
+    model_config = ConfigDict(extra="allow")
+    ok: bool = True
+    items: List[KbRecordListItem] = Field(default_factory=list)
+    total: int = 0
+    limit: int = 0
+    offset: int = 0
+    stats: KbRecordStats = Field(default_factory=KbRecordStats)
+
+
+class KbRecordDetailResp(BaseModel):
+    """单条记录详情；成功返回完整记录，失败返回 ok=False + message。"""
+    model_config = ConfigDict(extra="allow")
+    ok: bool
+    id: Optional[str] = None
+    type: Optional[str] = None
+    ts: int = 0
+    created_at: Optional[str] = None
+    query: Optional[str] = None
+    params: Dict[str, Any] = {}
+    summary: Dict[str, Any] = {}
+    result: Dict[str, Any] = {}
+    message: Optional[str] = None
+
+
+class KbRecordOpResp(BaseModel):
+    """删除 / 清空操作的返回。"""
+    model_config = ConfigDict(extra="allow")
+    ok: bool
+    deleted: Optional[int] = None
+    cleared_type: Optional[str] = None
+    message: Optional[str] = None
+
+
+class KbRecordExportResp(BaseModel):
+    """导出记录（JSON / Markdown 文本）。"""
+    model_config = ConfigDict(extra="allow")
+    ok: bool
+    format: Optional[str] = None
+    content: Optional[str] = None
+    filename: Optional[str] = None
+    message: Optional[str] = None
+
+
 # 解析模块内尚未定义完的前向引用（from __future__ import annotations 下为字符串注解）
 for _model in (BuildLogsResp,):
     _model.model_rebuild()

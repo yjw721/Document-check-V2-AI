@@ -805,6 +805,13 @@ def reindex_doc(doc_id: str, ai_cfg: Optional[Dict[str, Any]] = None) -> Dict[st
     kb["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
     save_kb(kb)
     invalidate()
+    # 刷盘：Chroma 持久化后端需 close() 才会把向量 checkpoint 到磁盘，
+    # 否则进程退出后向量仅停留在内存客户端，新进程读取会得到 0 向量。
+    try:
+        from checkers.rag import stores
+        stores.reset_store()
+    except Exception:  # noqa: BLE001
+        pass
     return {"ok": True, "id": doc.get("id", ""), "name": name,
             "chunks": len(entries), "embed_model": model, "diag": diag}
 
@@ -881,6 +888,13 @@ def rebuild_index(ai_cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     kb["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
     save_kb(kb)
     invalidate()
+    # 刷盘：Chroma 持久化后端需 close() 才会把向量 checkpoint 到磁盘，
+    # 否则进程退出后向量仅停留在内存客户端，新进程读取会得到 0 向量。
+    try:
+        from checkers.rag import stores
+        stores.reset_store()
+    except Exception:  # noqa: BLE001
+        pass
     st = store.stats() if store is not None else {"backend": "memory"}
     return {"ok": True, "rebuilt": rebuilt, "reembedded": reembedded,
             "skipped": skipped, "chunks": len(pending),
@@ -925,6 +939,8 @@ def retrieve(query: str, ai_cfg: Optional[Dict[str, Any]] = None,
     输出保持旧契约：chunk_id / doc_id / file / section / loc / text / score，
     额外补充 path / bm25 / cos / mode 便于溯源与诊断。
     """
+    if ai_cfg is None:
+        ai_cfg = _ai_settings()
     idx = load_index()
     if idx.size == 0:
         return []
@@ -982,6 +998,8 @@ def retrieve_for_verify(chunk_texts: Sequence[str],
 
     ``doc_ids`` 可把检索范围限定在某个目录子树内（按目录核验时使用）。
     """
+    if ai_cfg is None:
+        ai_cfg = _ai_settings()
     idx = load_index()
     if idx.size == 0:
         return []
@@ -1354,6 +1372,8 @@ def search_debug(query: str, ai_cfg: Optional[Dict[str, Any]] = None,
                  top_k: int = 5, doc_ids: Optional[Sequence[str]] = None
                  ) -> Dict[str, Any]:
     """仅检索、不生成：返回各路得分与融合结果，供前端诊断相关性。"""
+    if ai_cfg is None:
+        ai_cfg = _ai_settings()
     idx = load_index()
     if idx.size == 0:
         return {"ok": True, "hits": [], "stats": {"chunks": 0, "docs": 0,
