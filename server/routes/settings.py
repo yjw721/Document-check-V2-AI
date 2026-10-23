@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, File, Form, UploadFile, HTTPException, Request, Header
+from fastapi import APIRouter, Depends, File, Form, UploadFile, HTTPException, Request, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -22,7 +22,10 @@ from fastapi.staticfiles import StaticFiles
 from checkers.base import STATUS_PASS, STATUS_UNREADABLE, detect_file_type
 from checkers.scanner import check_single, collect_folder, summarize, _is_blank
 from config.config_manager import load_rules, save_rules, RuleConfig
-from config.settings_manager import load_settings, save_settings, restore_defaults
+from config.settings_manager import (
+    load_settings, save_settings, restore_defaults,
+    mask_secrets, merge_settings_patch,
+)
 from checkers.custom_rules import load_custom_rules, save_custom_rules
 from checkers.wordbank import load_wordbanks, save_wordbanks, parse_entries_import
 from checkers.template_parser import TemplateParser
@@ -104,23 +107,45 @@ from server.services.detection import (
 
 router = APIRouter()
 
+
+def _current_role() -> str:
+    from checkers.rag.permissions import normalize_role
+    return normalize_role((load_settings() or {}).get("role"))
+
+
+def _require_admin() -> None:
+    if _current_role() != "admin":
+        raise HTTPException(403, "仅管理员可执行此操作")
+
+
 # 设置
 # ---------------------------------------------------------------------------
 @router.get("/api/settings")
 def api_settings():
-    return load_settings()
+    return mask_secrets(load_settings())
 
 
 @router.post("/api/settings")
 def api_save_settings(payload: Dict[str, Any]):
-    if not save_settings(payload):
+    from checkers.rag.permissions import normalize_role
+
+    current = load_settings()
+    merged = merge_settings_patch(current, payload)
+    role = normalize_role(current.get("role"))
+    if role != "admin":
+        for section in ("ai", "security"):
+            if merged.get(section) != current.get(section):
+                raise HTTPException(403, "仅管理员可修改 AI 配置与访问安全设置")
+        if normalize_role(merged.get("role")) != normalize_role(current.get("role")):
+            raise HTTPException(403, "仅管理员可切换角色")
+    if not save_settings(merged):
         raise HTTPException(500, "设置保存失败")
     return {"ok": True}
 
 
-@router.post("/api/settings/restore")
+@router.post("/api/settings/restore", dependencies=[Depends(_require_admin)])
 def api_restore_settings():
-    return restore_defaults()
+    return mask_secrets(restore_defaults())
 
 
 # ---------------------------------------------------------------------------

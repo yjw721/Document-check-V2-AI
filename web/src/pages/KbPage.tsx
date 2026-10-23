@@ -1194,12 +1194,14 @@ export default function KbPage() {
             </span>
             <HoloButton onClick={() => exportRecs("json")}>导出 JSON</HoloButton>
             <HoloButton onClick={() => exportRecs("md")}>导出 Markdown</HoloButton>
-            <HoloButton
-              variant="danger"
-              onClick={clearRecs}
-            >
-              清空{recType ? (recType === "ask" ? "问答" : "检索") : "全部"}
-            </HoloButton>
+            {can("kb.delete") && (
+              <HoloButton
+                variant="danger"
+                onClick={clearRecs}
+              >
+                清空{recType ? (recType === "ask" ? "问答" : "检索") : "全部"}
+              </HoloButton>
+            )}
           </div>
         </div>
 
@@ -1217,6 +1219,7 @@ export default function KbPage() {
                 onDetail={openDetail}
                 onDelete={(id) => deleteRecord(id)}
                 onRerun={rec.type === "ask" ? rerunAsk : rerunSearch}
+                canDelete={can("kb.delete")}
               />
             ))
           )}
@@ -1249,6 +1252,7 @@ export default function KbPage() {
             setRecDetail(null);
           }}
           onDelete={(id) => deleteRecord(id, true)}
+          canDelete={can("kb.delete")}
         />
       )}
 
@@ -1548,11 +1552,13 @@ function RecordRow({
   onDetail,
   onDelete,
   onRerun,
+  canDelete,
 }: {
   rec: KbRecord;
   onDetail: (id: string) => void;
   onDelete: (id: string) => void;
   onRerun: (rec: KbRecord) => void;
+  canDelete: boolean;
 }) {
   const s = rec.summary;
   const isAsk = rec.type === "ask";
@@ -1594,12 +1600,14 @@ function RecordRow({
           >
             详情
           </button>
-          <button
-            onClick={() => onDelete(rec.id)}
-            className="rounded-lg border border-white/10 px-2 py-0.5 text-[11px] text-rose-300/80 transition-all hover:bg-rose-500/10"
-          >
-            删除
-          </button>
+          {canDelete && (
+            <button
+              onClick={() => onDelete(rec.id)}
+              className="rounded-lg border border-white/10 px-2 py-0.5 text-[11px] text-rose-300/80 transition-all hover:bg-rose-500/10"
+            >
+              删除
+            </button>
+          )}
         </div>
       </div>
       <div className="mt-1.5 truncate text-[13px] text-white/80" title={rec.query}>
@@ -1614,11 +1622,13 @@ function RecordDetailModal({
   onClose,
   onRerun,
   onDelete,
+  canDelete,
 }: {
   rec: KbRecord;
   onClose: () => void;
   onRerun: (rec: KbRecord) => void;
   onDelete: (id: string) => void;
+  canDelete: boolean;
 }) {
   const isAsk = rec.type === "ask";
   const s = rec.summary;
@@ -1644,12 +1654,14 @@ function RecordDetailModal({
             >
               重新执行
             </button>
-            <button
-              onClick={() => onDelete(rec.id)}
-              className="rounded-lg border border-rose-400/30 px-2.5 py-1 text-[12px] text-rose-300/80 transition-all hover:bg-rose-500/10"
-            >
-              删除
-            </button>
+            {canDelete && (
+              <button
+                onClick={() => onDelete(rec.id)}
+                className="rounded-lg border border-rose-400/30 px-2.5 py-1 text-[12px] text-rose-300/80 transition-all hover:bg-rose-500/10"
+              >
+                删除
+              </button>
+            )}
             <button
               onClick={onClose}
               className="rounded-lg border border-white/15 px-2.5 py-1 text-[12px] text-white/70 transition-all hover:bg-white/10"

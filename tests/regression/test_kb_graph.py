@@ -7,6 +7,7 @@
 import os
 import shutil
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -74,11 +75,26 @@ DOC_B = """# 评估方法对比（测试稿）
 
 
 def _rmtree(p):
+    # Chroma 的 PersistentClient 持有 SQLite 连接；Windows 下必须先释放连接，
+    # 否则 rmtree 会失败且旧代码会静默吞掉异常，导致「空库」仍读到旧知识库。
+    eng.invalidate()
     try:
-        if os.path.isdir(p):
-            shutil.rmtree(p)
-    except OSError:
+        from checkers.rag import stores
+        stores.reset_store()
+    except Exception:
         pass
+    if not os.path.isdir(p):
+        return
+    last = None
+    for _ in range(3):
+        try:
+            shutil.rmtree(p)
+            return
+        except OSError as exc:
+            last = exc
+            time.sleep(0.2)
+    if os.path.isdir(p) and last is not None:
+        raise last
 
 
 def build():
@@ -126,6 +142,7 @@ def main():
     g3 = graph.build_graph()
     chk("空库返回空图谱", g3["ok"] and g3["nodes"] == [] and g3["edges"] == [])
 
+    _rmtree(KB_DIR)
     print(f"\n图谱测试：通过 {OK} / 失败 {FAIL}")
     return FAIL == 0
 

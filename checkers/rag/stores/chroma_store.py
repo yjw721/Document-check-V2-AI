@@ -284,3 +284,28 @@ class ChromaStore(VectorStore):
                 "vectors": self.count() if ok else 0,
                 "dim": self.dim() if ok else 0,
                 "error": "" if ok else self.last_error}
+
+    def close(self) -> None:
+        """释放 PersistentClient 及其 SQLite 连接（Windows 下删除目录前必须调用）。"""
+        with self._lock:
+            client = self._client
+            self._client = None
+            self._col = None
+        if client is None:
+            return
+        try:
+            client.close()
+            return
+        except Exception:  # noqa: BLE001 - 旧版本无 close()，走兼容分支
+            pass
+        try:
+            system = getattr(client, "_system", None)
+            if system is not None:
+                system.stop()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            from chromadb.api.client import SharedSystemClient  # type: ignore
+            SharedSystemClient.clear_system_cache()
+        except Exception:  # noqa: BLE001
+            pass

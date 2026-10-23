@@ -68,6 +68,10 @@ def get_store(backend: Optional[str] = None,
                 store = cls(path=chroma_path)
                 if not store.available:
                     err = store.last_error or "Chroma 不可用"
+                    try:
+                        store.close()
+                    except Exception:  # noqa: BLE001
+                        pass
                     store = reg["memory"](path=memory_path)
             else:
                 store = cls(path=memory_path)
@@ -112,12 +116,19 @@ def vector_backends() -> List[Dict[str, Any]]:
         available = True
         error = ""
         if bid == "chroma":
+            probe = None
             try:
                 probe = reg[bid](path=os.path.join(_kb_dir(), "chroma"))
                 available = probe.available
                 error = probe.last_error
             except Exception as exc:  # noqa: BLE001
                 available, error = False, str(exc)
+            finally:
+                try:
+                    if probe is not None:
+                        probe.close()
+                except Exception:  # noqa: BLE001
+                    pass
         out.append({"id": bid, "label": label, "note": note,
                     "available": available, "error": error})
     return out

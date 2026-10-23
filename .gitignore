@@ -37,6 +37,7 @@ Thumbs.db
 .DS_Store
 
 # 知识库运行时数据（向量库 / 原文 / 恢复备份，仅存本机）
+config/knowledge/knowledge.json
 config/knowledge/chroma/
 config/knowledge/files/
 config/knowledge/records.json

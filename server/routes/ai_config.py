@@ -22,7 +22,10 @@ from fastapi.staticfiles import StaticFiles
 from checkers.base import STATUS_PASS, STATUS_UNREADABLE, detect_file_type
 from checkers.scanner import check_single, collect_folder, summarize, _is_blank
 from config.config_manager import load_rules, save_rules, RuleConfig
-from config.settings_manager import load_settings, save_settings, restore_defaults
+from config.settings_manager import (
+    load_settings, save_settings, restore_defaults,
+    SECRET_MASK, mask_secrets,
+)
 from checkers.custom_rules import load_custom_rules, save_custom_rules
 from checkers.wordbank import load_wordbanks, save_wordbanks, parse_entries_import
 from checkers.template_parser import TemplateParser
@@ -108,7 +111,7 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 @router.get("/api/ai/status")
 def api_ai_status():
-    return {"ai": (load_settings().get("ai") or {})}
+    return {"ai": mask_secrets(load_settings()).get("ai") or {}}
 
 
 @router.get("/api/ai/skills")
@@ -140,8 +143,11 @@ def api_ai_models(base_url: Optional[str] = None):
 @router.post("/api/ai/test")
 def api_ai_test(payload: Dict[str, Any]):
     """测试 AI 连接（mode/base_url/api_key/model 传入即覆盖设置）。"""
-    cfg = {**(load_settings().get("ai") or {}), **{k: v for k, v in payload.items()
-                                                    if k in ("mode", "base_url", "api_key", "model", "timeout")}}
+    current = load_settings().get("ai") or {}
+    cfg = {**current, **{k: v for k, v in payload.items()
+                         if k in ("mode", "base_url", "api_key", "model", "timeout")}}
+    if cfg.get("api_key") == SECRET_MASK:
+        cfg["api_key"] = current.get("api_key", "")
     ok, msg = ai_test_connection(cfg)
     return {"ok": ok, "message": msg}
 

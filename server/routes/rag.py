@@ -511,15 +511,15 @@ def api_rag_record_get(rid: str):
     return rag_rec_get(rid)
 
 
-@router.delete("/api/rag/records/{rid}", dependencies=[_require_cap("kb.search")])
+@router.delete("/api/rag/records/{rid}", dependencies=[_require_cap("kb.delete")])
 def api_rag_record_delete(rid: str):
-    """删除单条记录（逐条管理）。"""
+    """删除单条记录（逐条管理，需删除权限）。"""
     return rag_rec_del(rid)
 
 
-@router.delete("/api/rag/records", dependencies=[_require_cap("kb.search")])
+@router.delete("/api/rag/records", dependencies=[_require_cap("kb.delete")])
 def api_rag_records_clear(type: str = ""):
-    """清空记录（整体管理）：type 为空清全部，否则按类型清。"""
+    """清空记录（整体管理，需删除权限）：type 为空清全部，否则按类型清。"""
     return rag_rec_clear(type or None)
 
 

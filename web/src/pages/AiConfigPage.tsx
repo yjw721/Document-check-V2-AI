@@ -351,6 +351,9 @@ function BasicTab({
               onChange={(e) => setAi({ api_key: e.target.value })}
             />
           </Field>
+          <p className="text-[11px] text-white/35">
+            已设置时仅显示 ********；不改动会保留原 Key，清空后保存可删除。
+          </p>
           {ai.mode === "local" && modelMsg && <p className="text-[11px] text-amber-300/70">{modelMsg}</p>}
           {ai.mode === "local" && !modelCustom && localModels.length > 0 && (
             <p className="text-[11px] text-white/35">已同步扫描本机 Ollama：{localModels.length} 个模型</p>

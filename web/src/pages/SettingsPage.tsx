@@ -231,6 +231,9 @@ export default function SettingsPage() {
                 {showToken ? "隐藏" : "显示"}
               </button>
             </div>
+            <div className="mt-1 text-[11px] text-white/35">
+              已设置时仅显示 ********；不改动会保留原口令，清空后保存可取消口令。
+            </div>
           </div>
           <div>
             <div className="mb-1.5 text-xs text-white/60">监听范围</div>

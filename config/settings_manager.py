@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import threading
@@ -147,6 +148,47 @@ DEFAULTS: Dict[str, Any] = {
         "listen": "127.0.0.1",                 # 监听地址：127.0.0.1 = 仅本机 / 0.0.0.0 = 开放局域网（多用户）
     },
 }
+
+
+# ---------------------------------------------------------------------------
+# 敏感字段脱敏
+# ---------------------------------------------------------------------------
+SECRET_MASK = "********"
+SECRET_FIELDS = (("ai", "api_key"), ("security", "access_token"))
+
+
+def mask_secrets(data: Dict[str, Any]) -> Dict[str, Any]:
+    """返回脱敏副本：已配置的 API Key / 访问口令替换为固定掩码。
+
+    掩码同时作为「保持原值」的协议值：前端回传 ``********`` 时，
+    ``merge_settings_patch`` 会用当前配置中的真实值还原，避免保存时误覆盖。
+    """
+    out = copy.deepcopy(data if isinstance(data, dict) else {})
+    for section, field in SECRET_FIELDS:
+        sec = out.get(section)
+        if isinstance(sec, dict) and str(sec.get(field) or ""):
+            sec[field] = SECRET_MASK
+    return out
+
+
+def merge_settings_patch(current: Dict[str, Any],
+                         patch: Dict[str, Any]) -> Dict[str, Any]:
+    """把设置补丁合并到当前配置，并还原前端回传的敏感字段掩码。"""
+    patch = patch if isinstance(patch, dict) else {}
+    merged = _deep_merge(current if isinstance(current, dict) else {}, patch)
+    for section, field in SECRET_FIELDS:
+        incoming = patch.get(section)
+        if not isinstance(incoming, dict):
+            continue
+        if str(incoming.get(field) or "") != SECRET_MASK:
+            continue
+        sec = merged.get(section)
+        if not isinstance(sec, dict):
+            sec = {}
+            merged[section] = sec
+        src = current.get(section) if isinstance(current, dict) else None
+        sec[field] = (src or {}).get(field, "") if isinstance(src, dict) else ""
+    return merged
 
 
 # ---------------------------------------------------------------------------
