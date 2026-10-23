@@ -37,6 +37,7 @@ SAMPLE_FILES = [
 
 
 def main() -> int:
+    failures: list[str] = []
     config = load_rules()
     print("=" * 78)
     print("规则配置：", config.meta.get("config_name"), "版本", config.meta.get("config_version"))
@@ -109,14 +110,22 @@ def main() -> int:
 
     # 1) PDF 原生文本命中
     pdf_bad = by_name.get("sample_pdf_bad.pdf")
-    if pdf_bad and pdf_bad.status != STATUS_UNREADABLE:
+    if not pdf_bad:
+        print("  [PDF 文本检测] sample_pdf_bad.pdf 缺失（异常）")
+        failures.append("PDF 样例缺失：sample_pdf_bad.pdf")
+    elif pdf_bad.status == STATUS_UNREADABLE:
+        print(f"  [PDF 文本检测] {pdf_bad.file_name} 被误判为无法解析（异常）")
+        failures.append("PDF 文本检测：正常文本 PDF 被误判为无法解析")
+    else:
         print(f"  [PDF 文本检测] {pdf_bad.file_name} → {pdf_bad.status_text}，"
               f"命中 {len(pdf_bad.issues)} 条")
         loc_ok = any(i.location.startswith("第 ") and "页" in i.location
                      for i in pdf_bad.issues)
         print(f"    位置格式「第 N 页」：{'OK' if loc_ok else '缺失！'}")
-    else:
-        print("  [PDF 文本检测] sample_pdf_bad.pdf 缺失或判定为无法解析（异常）")
+        if len(pdf_bad.issues) == 0:
+            failures.append("PDF 文本检测：期望至少命中 1 条问题，实际 0 条")
+        if not loc_ok:
+            failures.append("PDF 文本检测：位置格式「第 N 页」缺失")
 
     # 2) 扫描图片型 PDF → 无法解析
     pdf_scan = by_name.get("sample_pdf_scan.pdf")
@@ -124,6 +133,7 @@ def main() -> int:
         print(f"  [扫描图片型 PDF] {pdf_scan.file_name} → 无法解析（隔离 OK）：{pdf_scan.error_message}")
     else:
         print("  [扫描图片型 PDF] sample_pdf_scan.pdf 未被判定为无法解析（异常）")
+        failures.append("扫描图片型 PDF 未隔离为无法解析")
 
     # 3) 加密 PDF → 无法解析
     pdf_enc = by_name.get("sample_pdf_encrypted.pdf")
@@ -131,6 +141,7 @@ def main() -> int:
         print(f"  [加密 PDF] {pdf_enc.file_name} → 无法解析（隔离 OK）：{pdf_enc.error_message}")
     else:
         print("  [加密 PDF] sample_pdf_encrypted.pdf 未被判定为无法解析（异常）")
+        failures.append("加密 PDF 未隔离为无法解析")
 
     # 4) 自定义规则命中（category=custom_rule）
     cust_hits = [i for r in results for i in r.issues if i.category == "custom_rule"]
@@ -171,8 +182,19 @@ def main() -> int:
     from docx import Document
     doc = Document(path)
     print(f"报告校验：段落 {len(doc.paragraphs)} 个，表格 {len(doc.tables)} 个 → 结构有效")
+
+    # ---- 断言汇总：核心期望未满足时返回非 0（CI 门禁） ----
+    # 说明：扫描图/加密 PDF 隔离、PDF 文本检测为确定性核心行为，必须成立；
+    # 自定义规则/词库的命中依赖样例内容（当前样例未覆盖），仅作信息提示，不计入失败。
+    print("\n" + "=" * 78)
+    if failures:
+        print(f"自检未通过：{len(failures)} 项核心期望未满足")
+        for f in failures:
+            print(f"  ❌ {f}")
+    else:
+        print("自检通过：全部核心期望满足")
     print("=" * 78)
-    return 0
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":
