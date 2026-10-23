@@ -105,7 +105,10 @@ from server.services.detection import (
     state_payload as _state_payload,
 )
 
-router = APIRouter()
+from checkers.rag.permissions import require as _require_cap
+
+# 整个「AI 配置」后台模块仅管理员可见（与前端隐藏逻辑一致，服务端 fail-closed 兜底）
+router = APIRouter(dependencies=[_require_cap("ai.config")])
 
 # AI 智能核验（可选：本地 AI / 联网 AI）
 # ---------------------------------------------------------------------------

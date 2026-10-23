@@ -107,7 +107,10 @@ from server.services.detection import (
     state_payload as _state_payload,
 )
 
-router = APIRouter()
+from checkers.rag.permissions import require as _require_cap
+
+# AI 生成能力：核验操作员与管理员可用（权限矩阵由 permissions 模块统一管控）
+router = APIRouter(dependencies=[_require_cap("ai.use")])
 
 # ---- AI 规则/词库智能生成：对话式 / 文本式 / 文档式（流式展示推理过程） ----
 _BUILD_LOGS: Dict[str, List[Dict[str, Any]]] = {}

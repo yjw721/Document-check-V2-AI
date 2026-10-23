@@ -46,13 +46,15 @@ CAP_DEFS: List[Dict[str, str]] = [
     {"id": "kb.reindex", "label": "重向量化", "desc": "单文档更新重嵌、全量重建索引"},
     {"id": "kb.delete", "label": "删除", "desc": "删除文档、清空知识库"},
     {"id": "kb.manage", "label": "管理", "desc": "新建 / 重命名 / 删除目录，修改切片参数与后端配置"},
+    {"id": "ai.config", "label": "AI 配置管理", "desc": "查看与修改 AI 配置、引用库、活动日志等后台模块（仅管理员）"},
+    {"id": "ai.use", "label": "AI 生成", "desc": "使用 AI 规则/词库智能生成、AI 记忆学习等生成能力"},
 ]
 
 ALL_CAPS: List[str] = [c["id"] for c in CAP_DEFS]
 
 DEFAULT_CAPS: Dict[str, List[str]] = {
     "admin": list(ALL_CAPS),
-    "operator": ["kb.view", "kb.search", "kb.upload", "kb.reindex"],
+    "operator": ["kb.view", "kb.search", "kb.upload", "kb.reindex", "ai.use"],
     "viewer": ["kb.view", "kb.search"],
 }
 

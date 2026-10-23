@@ -103,7 +103,10 @@ from server.services.detection import (
     state_payload as _state_payload,
 )
 
-router = APIRouter()
+from checkers.rag.permissions import require as _require_cap
+
+# AI 记忆学习能力：核验操作员与管理员可用（权限矩阵由 permissions 模块统一管控）
+router = APIRouter(dependencies=[_require_cap("ai.use")])
 
 # --- 本地 AI 自学习记忆（人工校对成对样本：系统留存原始文档 + 用户上传修订文档） ---
 @router.get("/api/ai_memory")
