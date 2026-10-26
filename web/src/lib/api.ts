@@ -42,6 +42,7 @@ import type {
   ScanResult,
   SettingsData,
   AiSkill,
+  AiSkillPackImport,
   TaskSnapshot,
   TaskStartResult,
   TemplateDraft,
@@ -279,6 +280,12 @@ export const api = {
   /* ---------- AI 智能核验 ---------- */
   aiStatus: () => request<{ ai: AiSettings }>("GET", "/api/ai/status"),
   aiSkills: () => request<{ builtin: AiSkill[] }>("GET", "/api/ai/skills"),
+  /* 导入 zipskill 标准技能包（Agent Skills ZIP），后端解析返回技能列表 */
+  aiImportSkillPack: (file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return request<AiSkillPackImport>("POST", "/api/ai/skills/import", fd, { form: true });
+  },
   aiModels: (baseUrl?: string) =>
     request<{ ok: boolean; models: string[]; base_url?: string; message?: string }>(
       "GET",

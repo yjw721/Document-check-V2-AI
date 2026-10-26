@@ -338,6 +338,15 @@ export interface AiSkill {
   default_severity?: string;       // 建议严重度：high/medium/low/空
 }
 
+/* ---------- zipskill 标准技能包导入（后端解析 Agent Skills ZIP 后的响应） ---------- */
+export interface AiSkillPackImport {
+  ok: boolean;
+  skills: AiSkill[];
+  count: number;
+  message?: string;
+  errors?: string[];
+}
+
 /* ---------- AI 自定义提示词预设 ---------- */
 export interface AiPromptPreset {
   id: string;

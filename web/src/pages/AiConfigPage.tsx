@@ -694,6 +694,8 @@ function SkillTab({
   const [builtin, setBuiltin] = useState<AiSkill[]>([]);
   const [editing, setEditing] = useState<AiSkill | null>(null);
   const importRef = useRef<HTMLInputElement>(null);
+  const packRef = useRef<HTMLInputElement>(null);
+  const [packImporting, setPackImporting] = useState(false);
 
   const active: string[] = ai.active_skills ?? [];
   const custom: AiSkill[] = ai.custom_skills ?? [];
@@ -723,6 +725,23 @@ function SkillTab({
     const cur = new Set(ai.active_skills ?? []);
     cur.delete(id);
     setAi({ custom_skills: nextCustom, active_skills: [...cur] });
+  };
+
+  // 判定技能字段是否齐全（id / name / prompt 必为字符串）——JSON 导入与技能包导入共用
+  const isValidSkill = (s: AiSkill | undefined | null): s is AiSkill =>
+    !!s && typeof s.id === "string" && typeof s.name === "string" && typeof s.prompt === "string";
+
+  // 合并导入的技能（同 id 覆盖、新 id 追加）并提交保存；未提供启用列表时默认全部启用
+  const commitImport = async (valid: AiSkill[], pkgActive?: string[]) => {
+    const byId = new Map(custom.map((s) => [s.id, s]));
+    for (const s of valid) byId.set(s.id, s);
+    const nextCustom = [...byId.values()];
+    const cur = new Set(active);
+    const nextActive: string[] = Array.isArray(pkgActive)
+      ? [...new Set([...cur, ...pkgActive.filter((x) => byId.has(x))])]
+      : [...new Set([...cur, ...valid.map((s) => s.id)])];
+    await onCommit({ custom_skills: nextCustom, active_skills: nextActive }, `已导入 ${valid.length} 个技能`);
+    return valid.length;
   };
 
   // 导出：将自定义技能库（含启用状态）序列化为 JSON 文件下载
@@ -759,27 +778,38 @@ function SkillTab({
         toast("导入文件未包含自定义技能", "err");
         return;
       }
-      const valid = incoming.filter(
-        (s) => s && typeof s.id === "string" && typeof s.name === "string" && typeof s.prompt === "string",
-      );
+      const valid = incoming.filter(isValidSkill);
       if (valid.length !== incoming.length) toast("部分技能格式不合法，已跳过", "err");
       if (!valid.length) {
         toast("导入文件中无有效技能", "err");
         return;
       }
-      const byId = new Map(custom.map((s) => [s.id, s]));
-      for (const s of valid) byId.set(s.id, s); // 同 id 覆盖，新 id 追加
-      const nextCustom = [...byId.values()];
-      const cur = new Set(active);
-      let nextActive: string[];
-      if (Array.isArray(data?.active_skills)) {
-        nextActive = [...new Set([...cur, ...data.active_skills.filter((x: string) => byId.has(x))])];
-      } else {
-        nextActive = [...new Set([...cur, ...valid.map((s) => s.id)])];
-      }
-      await onCommit({ custom_skills: nextCustom, active_skills: nextActive }, `已导入 ${valid.length} 个技能`);
+      await commitImport(valid, Array.isArray(data?.active_skills) ? data.active_skills : undefined);
     } catch {
       toast("导入失败：文件不是有效的技能 JSON", "err");
+    }
+  };
+
+  // 导入 zipskill 标准技能包（Agent Skills 开放标准 ZIP）：上传后端解析，再合并进自定义库
+  const handleImportPackFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // 允许重复选择同一文件
+    if (!file) return;
+    setPackImporting(true);
+    try {
+      const res = await api.aiImportSkillPack(file);
+      const incoming: AiSkill[] = Array.isArray(res.skills) ? res.skills : [];
+      const valid = incoming.filter(isValidSkill);
+      if (res.errors?.length) toast(res.errors.join("；"), "err");
+      if (!valid.length) {
+        toast(res.message || "技能包中无有效技能", "err");
+        return;
+      }
+      await commitImport(valid); // 技能包无启用标记，默认全部启用
+    } catch (err) {
+      toast(`导入失败：${(err as Error)?.message || "无法解析技能包"}`, "err");
+    } finally {
+      setPackImporting(false);
     }
   };
 
@@ -789,7 +819,8 @@ function SkillTab({
       <p className="mt-2 text-xs leading-relaxed text-white/45">
         专项技能与「角色设定 / 提示词预设」并存生效：预设定义 AI 的「人设与风格」，技能定义 AI 的「专项关注点」，
         二者同时注入系统提示、互不替代，共同收紧审核力度。内置技能可一键开关；自定义技能库支持新建 / 编辑 / 删除 / 启用，
-        并可将整套技能库导出为 JSON 备份或与他人共享、再导入合并。
+        并可将整套技能库导出为 JSON 备份或与他人共享、再导入合并；亦支持「导入技能包」——上传 zipskill 标准技能包
+        （Agent Skills 开放标准的 .zip / .zipskill，包内每个含 SKILL.md 的目录解析为一个技能，正文即专项指令）。
       </p>
 
       <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.04] p-4">
@@ -820,6 +851,9 @@ function SkillTab({
           <span>自定义技能库（{custom.length}）</span>
           <div className="flex items-center gap-1.5">
             <HoloButton size="sm" variant="ghost" onClick={() => importRef.current?.click()}>导入</HoloButton>
+            <HoloButton size="sm" variant="ghost" onClick={() => packRef.current?.click()} disabled={packImporting}>
+              {packImporting ? "解析中…" : "导入技能包"}
+            </HoloButton>
             <HoloButton size="sm" variant="ghost" onClick={handleExport} disabled={custom.length === 0}>导出</HoloButton>
             <HoloButton size="sm" onClick={() => setEditing({ id: genId("sk"), name: "", description: "", prompt: "", file_types: "all", default_severity: "" })}>
               ＋ 新建技能
@@ -855,6 +889,7 @@ function SkillTab({
       </div>
 
       <input ref={importRef} type="file" accept="application/json,.json" className="hidden" onChange={handleImportFile} />
+      <input ref={packRef} type="file" accept=".zip,.zipskill,application/zip" className="hidden" onChange={handleImportPackFile} />
 
       {editing && (
         <SkillEditor

@@ -12,6 +12,7 @@ uvicorn>=0.20                     # ASGI 服务器
 python-multipart>=0.0.6          # 文件上传解析（multipart）
 python-docx>=1.0.0                # Word 文档解析与报告生成
 openpyxl>=3.1.0                   # Excel 文档解析
+PyYAML>=6.0                       # SKILL.md frontmatter 解析（zipskill 标准技能包导入）
 
 # ---------- 知识库模块（RAG + 向量库 + 多格式解析 + OCR） ----------
 chromadb>=0.5.0                   # 向量数据库（默认后端，本地持久化；缺失时自动降级内存后端）

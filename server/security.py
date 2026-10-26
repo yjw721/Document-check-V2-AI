@@ -61,6 +61,12 @@ def install(app: Any) -> None:
 
     @app.middleware("http")
     async def access_gate(request: Request, call_next):
+        # CORS 预检（OPTIONS）按规范不携带任何凭证头、也不执行任何业务操作，
+        # 必须直接放行到 CORSMiddleware 应答；否则预检在门禁处被 401 截断且无 CORS 头，
+        # 跨域（如 Vite 开发服务器）连管理员接口的 GET 都会 "Failed to fetch"。
+        # 仅放行方法本身，真实请求（GET/POST/…）的口令校验逻辑不变，不降低安全性。
+        if request.method.upper() == "OPTIONS":
+            return await call_next(request)
         path = request.url.path
         if path.startswith("/api/") and path.rstrip("/") != "/api/security/ping":
             token = access_token()
