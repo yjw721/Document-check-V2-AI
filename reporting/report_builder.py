@@ -689,9 +689,10 @@ class ReportBuilder:
             ("覆盖策略", str(ai_rec.get("coverage") or "—")),
             ("深度复核", "开启（每段追加一轮补漏复核）" if ai_rec.get("deep_review")
                         else "关闭"),
-            ("严格取证", "开启（引用需逐字命中，置信度低于 "
-                        f"{ai_rec.get('min_confidence', 0.6)} 的问题丢弃）"
-                        if ai_rec.get("strict_grounding") else "关闭"),
+            ("核验策略", ("AI 广撒网 + 规则复核（确定性验算剔除误报、提升确证项）"
+                         if ai_rec.get("rule_recheck", True) else "模型单次判定")),
+            ("候选门槛", f"置信度 ≥ {ai_rec.get('min_confidence', 0.45)}；"
+                        f"引用取证{'严格' if ai_rec.get('strict_grounding') else '宽松'}"),
             ("参考资料", "已携带" if ai_rec.get("ref_enabled") else "未携带"),
             ("知识库 RAG", (
                 "已启用 · 知识库 {0} 个文档 / {1} 个片段 · 每片段注入 {2} 段 · {3}".format(
@@ -701,14 +702,10 @@ class ReportBuilder:
                 )) if ai_rec.get("kb_enabled") else "未启用"),
             ("记录时间", str(ai_rec.get("recorded_at") or self.now.strftime("%Y-%m-%d %H:%M:%S"))),
         ]
-        _active_skills = ai_rec.get("active_skills") or []
-        if _active_skills:
-            _names = "、".join(
-                (s.get("name", s) if isinstance(s, dict) else str(s)) for s in _active_skills
-            )
-            _builtin_cnt = sum(1 for s in _active_skills if isinstance(s, dict) and s.get("builtin"))
-            _conf_suffix = f"（内置 {_builtin_cnt} / 自定义 {len(_active_skills) - _builtin_cnt}）"
-            conf_rows.append(("启用专项技能", _names + _conf_suffix))
+        # 仅记录启用数量，不输出技能名称 / 提示词等详情
+        _skill_cnt = int(ai_rec.get("skill_count") or 0)
+        if _skill_cnt:
+            conf_rows.append(("启用专项技能", f"{_skill_cnt} 个"))
         _kv_table(doc, conf_rows)
 
         sys_prompt = str(ai_rec.get("system_prompt") or "").strip()
@@ -716,10 +713,6 @@ class ReportBuilder:
             _para(doc, "", space_after=4)
             _para(doc, "【AI 核验主提示词】", size=10, bold=True, color=COLOR_PRIMARY, space_after=3)
             _para(doc, sys_prompt, size=8.5, line_spacing=1.25, color=COLOR_TEXT, space_after=6)
-        _skill_prompts = str(ai_rec.get("skill_prompts") or "").strip()
-        if _skill_prompts:
-            _para(doc, "【启用的专项技能提示词】", size=10, bold=True, color=COLOR_PRIMARY, space_after=3)
-            _para(doc, _skill_prompts, size=8.5, line_spacing=1.25, color=COLOR_TEXT, space_after=6)
         rev_prompt = str(ai_rec.get("review_prompt") or "").strip()
         if rev_prompt and ai_rec.get("deep_review"):
             _para(doc, "【AI 深度复核提示词】", size=10, bold=True, color=COLOR_PRIMARY, space_after=3)

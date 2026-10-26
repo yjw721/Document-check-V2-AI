@@ -173,9 +173,12 @@ DEFAULTS: Dict[str, Any] = {
     "ref_max_chars": 2000,
     # 增强审核力度：deep_review 开启后每段追加一轮「补漏复核」请求（耗时约翻倍）
     "deep_review": True,
-    # 严格取证：收紧引用命中阈值，丢弃把握度低于阈值的问题
+    # 严格取证：收紧引用命中阈值（最终判定阶段生效）
     "strict_grounding": True,
-    "min_confidence": 0.6,
+    # 广撒网：候选收集阶段放宽门槛（0.6 → 0.45），由规则复核把关准确率
+    "min_confidence": 0.45,
+    # 规则复核：AI 输出候选后，用确定性验算剔除误报、提升确证项（建议保持开启）
+    "rule_recheck": True,
     # 专项技能（SKILL）：active_skills = 启用的技能 id 集合；custom_skills = 用户自定义技能库。
     # None 表示未显式配置，运行时自动启用所有内置 default_on 技能。
     "active_skills": None,
@@ -221,42 +224,78 @@ def resolve_local_model(cfg: Dict[str, Any]) -> Tuple[str, str]:
         return model, ""
     return models[0], f"本地模型已自动同步为「{models[0]}」（原配置「{model}」不在本机）"
 
-_SYS_PROMPT = (
-    "你是一名极其严谨的文档质量复核专家，承担文档归档前的终审职责。\n"
+# ---------------------------------------------------------------------------
+# 主提示词：按模型能力自适应。
+# 旧版反复强调「宁可漏报也不要误报」「无法确证一律不输出」，叠加解析层严格取证后，
+# 小模型几乎只输出空数组。现改为「广撒网」：要求按把握度分级输出候选，
+# 由后置规则复核（_rule_recheck）做确定性判定，剔除误报、提升确证项。
+# ---------------------------------------------------------------------------
+_SYS_HEAD = (
+    "你是一名严谨的文档质量复核专家，承担文档归档前的终审职责。\n"
     "【工作方式】逐句、逐单元格通读片段，禁止跳读与概括式浏览；遇到表格必须逐行逐列"
     "重新计算，不得凭印象判断；读到数值、日期、金额、比例时必须与片段其它位置交叉核对。\n"
-    "【核查维度】以下 9 类必须全部覆盖，发现任何确凿问题都要指出：\n"
+)
+
+# 完整核查清单：联网大模型（online）使用，覆盖 9 类
+_SYS_CHECKS = (
+    "【核查维度】以下 9 类都要覆盖，发现问题就指出：\n"
     "1. 错别字：同音 / 形近字误用、多字漏字、重字、繁简混用；\n"
     "2. 用词不当：口语化表述、术语误用、词义重复啰嗦、褒贬与语体不符、称谓不统一；\n"
     "3. 句型语病：语法错误、成分残缺、搭配不当、句式杂糅、语序混乱、指代不明；\n"
     "4. 标点与格式：标点误用致歧义、中英文标点混用、编号层级错乱、空格与换行异常；\n"
     "5. 数据错误：前后数字矛盾、金额 / 数量 / 面积 / 日期 / 比例不合常理、单位缺失或混用、"
-    "大写金额与小写金额不一致、数字位数或小数点错位、表述含糊无法核对；\n"
-    "6. 表格计算：合计 / 小计 / 求和与分项不符、占比与分项不匹配、跨行跨列及跨表勾稽错误"
-    "（必须逐项重算，写明『哪项 + 哪项 = 应得值，文中写为 X』，并指出是哪一行 / 哪一项）；\n"
+    "大写金额与小写金额不一致、数字位数或小数点错位；\n"
+    "6. 表格计算：合计 / 小计 / 求和与分项不符、占比与分项不匹配、跨行跨列勾稽错误"
+    "（逐项重算，写明『哪项 + 哪项 = 应得值，文中写为 X』）；\n"
     "7. 交叉一致性：同一主体（名称 / 编号 / 日期 / 金额 / 单位 / 口径）在片段内不同位置"
-    "出现时必须一致，前后称谓、口径、时点必须统一；\n"
-    "8. 逻辑与内容：前后矛盾、因果不成立、表意不清、逻辑不通、内容缺失、事实性错误；\n"
-    "9. 规范符合性：若提供了参考资料 / 知识库资料，必须严格依据其条款核查，并在 detail 中注明"
-    "所依据的标准名称或条款编号（或资料原文要点）；资料与片段内容不一致时，以资料为准判定"
-    "『规范不符』，但不得脱离片段原文臆造问题。\n"
-    "【输出纪律】（务必遵守，宁可漏报也不要误报）\n"
-    "- 每条问题的 quote 必须是片段中【逐字出现】的原句 / 原词，严禁编造、拼凑或改写后才引用；\n"
-    "- 必须能在片段中直接举证才输出，无法确证的问题一律不输出；\n"
+    "出现时必须一致；\n"
+    "8. 逻辑与内容：前后矛盾、因果不成立、表意不清、内容缺失、事实性错误；\n"
+    "9. 规范符合性：有参考资料 / 知识库资料时严格依据其条款核查，并在 detail 中注明"
+    "所依据的标准名称或条款编号。\n"
+)
+
+# 精简核查清单：本地小模型（local）使用，聚焦最高频、最可判定的 5 类。
+# 小模型上下文与指令跟随能力有限，清单过长会稀释注意力、反而检不出。
+_SYS_CHECKS_LITE = (
+    "【核查维度】重点排查以下 5 类问题：\n"
+    "1. 错别字与用词：同音 / 形近误用、多字漏字、口语化、称谓不统一；\n"
+    "2. 数据错误：前后数字矛盾、金额 / 数量 / 日期 / 比例不合常理、单位缺失或混用、"
+    "大写金额与小写金额不一致、小数点错位；\n"
+    "3. 表格计算：合计 / 小计与分项不符、占比与分项不匹配、勾稽错误"
+    "（写明『哪项 + 哪项 = 应得值，文中写为 X』）；\n"
+    "4. 交叉一致性：同一名称 / 编号 / 日期 / 金额 / 单位前后必须一致；\n"
+    "5. 逻辑与内容：前后矛盾、内容缺失、事实性错误。\n"
+)
+
+_SYS_TAIL = (
+    "【输出纪律】\n"
+    "- 先全面排查，再按把握度输出：有依据的问题都要列出，不要因为把握不是百分之百就遗漏；\n"
+    "- 把握很足的 confidence 给 0.8~1.0；仍应提示但存疑的给 0.4~0.7"
+    "（存疑项会被单独标注，交人工判断，不会直接算作错误）；\n"
+    "- quote 必须是片段中真实出现的原文，可截取关键片段，但严禁编造、拼凑或改写；\n"
     "- detail 必须写出证据：数据 / 表格类写明算式与正确值，矛盾类写明前后两处原文；\n"
-    "- 禁止输出『建议优化』『表述可更佳』『建议斟酌』等主观偏好类意见，只输出确凿错误；\n"
+    "- 禁止输出『建议优化』『表述可更佳』『建议斟酌』等主观偏好类意见；\n"
     "- 同一处问题只报告一次，选取最具代表性的 quote；\n"
-    "- category 必须严格取以下之一：用词不当 / 句型语病 / 错别字 / 数据错误 / "
+    "- category 必须取以下之一：用词不当 / 句型语病 / 错别字 / 数据错误 / "
     "表格计算 / 逻辑矛盾 / 内容缺失 / 规范不符 / 其他；\n"
     "- severity 取 high / medium / low：影响结论或金额正确性取 high，表述性问题取 medium，"
-    "把握不足取 low；\n"
-    "- confidence 为 0~1 的把握度，低于 0.6 的请直接不要输出。\n"
+    "把握不足取 low。\n"
     "【返回格式】严格 JSON 数组，不要返回任何其它文字或解释：\n"
-    '[{"quote":"片段中的原句/原词","category":"上述分类之一","issue":"具体问题简述",'
+    '[{"quote":"片段中的原文","category":"上述分类之一","issue":"问题简述",'
     '"detail":"举证说明（含算式/矛盾依据）","suggestion":"修改建议",'
     '"severity":"high或medium或low","confidence":0.9}]\n'
-    "若片段没有确凿问题，返回空数组 []。\n"
+    "若片段没有发现问题，返回空数组 []。\n"
 )
+
+
+def _sys_prompt(mode: str = "local") -> str:
+    """按模型能力自适应组装主提示词。
+
+    local（本地小模型）用精简核查清单，避免长指令稀释注意力；
+    online（联网大模型）用完整 9 类清单，追求覆盖率。
+    """
+    checks = _SYS_CHECKS if str(mode) != "local" else _SYS_CHECKS_LITE
+    return _SYS_HEAD + checks + _SYS_TAIL
 
 # 输出契约：作为最后一条系统消息下发，用于覆盖角色设定 / 预设提示词 / 参考资料中
 # 与之冲突的自定义输出格式（否则模型可能返回非数组结构，导致核验结果被整体丢弃）
@@ -276,11 +315,12 @@ _REVIEW_PROMPT = (
     "以下是同一文档片段的【深度复核】轮次。\n"
     "上一轮已输出的问题清单（不要重复输出，也不要质疑推翻）：\n"
     "{found}\n"
-    "请再次逐句、逐单元格通读片段，只输出上一轮【遗漏的确凿问题】。\n"
+    "请再次逐句、逐单元格通读片段，只输出上一轮【遗漏的问题】。\n"
     "补漏重点：表格勾稽与合计重算、跨段落数值 / 名称 / 日期一致性、金额大小写核对、"
     "单位与口径统一、标点与编号、术语与错别字、内容与逻辑缺口。\n"
-    "仍然必须遵守：quote 逐字来自片段；detail 写明算式或矛盾依据；"
-    "confidence 低于 0.6 不输出；禁止主观偏好类意见。\n"
+    "仍然必须遵守：quote 取自片段真实原文（可截取，严禁编造）；"
+    "detail 写明算式或矛盾依据；存疑项也要输出并标低 confidence，交人工判断；"
+    "禁止主观偏好类意见。\n"
     "每条必须完整包含 quote / category / issue / detail / suggestion / severity / "
     "confidence 七个字段（缺一不可，尤其是 issue 简述与 category 分类）。\n"
     "返回同样格式的严格 JSON 数组；若确实没有遗漏，返回 []。\n"
@@ -368,6 +408,10 @@ BUILTIN_SKILLS: List[Dict[str, Any]] = [
 ]
 
 
+# 单次核验注入的专项技能上限（过量技能会挤占上下文、稀释核查重点）
+_SKILL_INJECT_MAX = 3
+
+
 def _norm_ftype(ftype: str) -> str:
     """将文件类型归一为技能过滤用的短标签：doc / xls / pdf / txt / 空。"""
     f = (ftype or "").lower()
@@ -411,29 +455,49 @@ def get_active_skill_list(ai: Dict[str, Any]) -> List[Dict[str, Any]]:
     return out
 
 
-def build_skill_section(ai: Dict[str, Any], ftype: str = "") -> str:
-    """构造专项技能的系统提示片段（按文件类型过滤）；无启用技能返回空串。"""
+def build_skill_section(ai: Dict[str, Any], ftype: str = "", mode: str = "") -> str:
+    """构造专项技能的系统提示片段。
+
+    优化点（长提示会稀释注意力，是本地小模型检不出问题的重要诱因）：
+      1. 按文件类型过滤，且精确匹配该文件类型的技能优先保留；
+      2. 限制注入数量：local 小模型 2 项、online 最多 _SKILL_INJECT_MAX 项；
+      3. local 小模型注入精简要点（description），online 才用完整 prompt。
+    """
     skills = get_active_skill_list(ai)
     if not skills:
         return ""
+    if not mode:
+        mode = _ai_mode(ai)
     token = _norm_ftype(ftype)
-    parts: List[str] = []
+    max_n = 2 if mode == "local" else _SKILL_INJECT_MAX
+
+    candidates: List[Tuple[int, Dict[str, Any]]] = []
     for s in skills:
         ft = (s.get("file_types") or "all").lower()
         if ft != "all" and token:
             if token not in [t.strip() for t in ft.split(",")]:
                 continue
-        prompt = (s.get("prompt") or "").strip()
-        if not prompt:
+        # 精确声明了本文件类型的技能视为更相关，优先保留
+        rank = 0 if (ft != "all" and token) else 1
+        candidates.append((rank, s))
+    candidates.sort(key=lambda x: x[0])
+
+    parts: List[str] = []
+    for _rank, s in candidates[:max_n]:
+        if mode == "local":
+            body = (s.get("description") or s.get("prompt") or "").strip()
+        else:
+            body = (s.get("prompt") or s.get("description") or "").strip()
+        if not body:
             continue
         name = s.get("name", "专项技能")
         sev = (s.get("default_severity") or "").strip()
-        sev_hint = f"（本技能发现的问题建议标注为 {sev} 严重度）" if sev else ""
-        parts.append(f"■ {name}：{prompt}{sev_hint}")
+        sev_hint = f"（建议标注 {sev}）" if sev else ""
+        parts.append(f"■ {name}：{body}{sev_hint}")
     if not parts:
         return ""
-    return ("【专项技能核验】本次核验额外启用以下专项技能，请在每个文档片段中额外关注这些维度；"
-            "发现确凿问题仍按输出契约的字段与格式输出"
+    return (f"【专项技能核验】本次额外启用以下 {len(parts)} 项技能，请额外关注这些维度；"
+            "发现问题仍按输出契约的字段与格式输出"
             "（category 取最匹配的标准分类，必要时用「其他」）：\n" + "\n".join(parts))
 
 
@@ -685,6 +749,9 @@ def _fmt_evidence(refs: Sequence[Dict[str, Any]], limit: int = 3) -> str:
 
 # 引用命中的最小连续字符数（严格取证模式下为 10，宽松模式回退为 8）
 _QUOTE_MIN_HIT = 10
+# 广撒网阶段（候选收集）的宽松阈值：小模型引用常带换行/空格差异，
+# 用严格阈值会在解析阶段就把候选整体丢弃，导致检不出问题。
+_QUOTE_MIN_HIT_LOOSE = 4
 
 
 def set_strict_grounding(on: bool) -> None:
@@ -693,14 +760,8 @@ def set_strict_grounding(on: bool) -> None:
     _QUOTE_MIN_HIT = 10 if on else 8
 
 
-def _quote_grounded(quote: str, source: str) -> bool:
-    """判断模型引用的 quote 是否确实出现在原文中（防幻觉）。
-
-    允许模型在引用时略有标点 / 空格差异：要求 quote 的归一化全文命中；
-    否则要求存在长度不小于 _QUOTE_MIN_HIT 的连续片段命中原文。
-    阈值由 8 提升到 _QUOTE_MIN_HIT（默认 10），短引用必须整段命中，
-    避免仅凭少量字符的偶然重合就让编造引用通过。
-    """
+def _quote_hit(quote: str, source: str, need: int) -> bool:
+    """引用命中判定：归一化全文命中，或存在长度不小于 need 的连续片段命中。"""
     if not quote or not source:
         return True
     q = _norm_text(quote)
@@ -709,13 +770,23 @@ def _quote_grounded(quote: str, source: str) -> bool:
         return False
     if q in s:
         return True
-    need = min(_QUOTE_MIN_HIT, len(q))
+    need = min(need, len(q))
     if len(q) < need:
         return False
     for i in range(0, len(q) - need + 1):
         if q[i:i + need] in s:
             return True
     return False
+
+
+def _quote_grounded(quote: str, source: str) -> bool:
+    """严格取证：短引用必须整段命中，避免偶然重合让编造引用通过。"""
+    return _quote_hit(quote, source, _QUOTE_MIN_HIT)
+
+
+def _quote_grounded_loose(quote: str, source: str) -> bool:
+    """宽松取证：用于广撒网阶段保留候选，交由后续规则复核做最终判定。"""
+    return _quote_hit(quote, source, _QUOTE_MIN_HIT_LOOSE)
 
 
 # 字段别名：兼容模型或用户预设提示词驱动出的多样化字段名
@@ -827,8 +898,13 @@ def _flatten_nodes(obj: Any, depth: int = 0) -> List[Dict[str, Any]]:
 
 
 def _node_to_item(node: Dict[str, Any], source: str,
-                  min_confidence: float) -> Optional[Dict[str, Any]]:
-    """把单个（可能来自嵌套结构的）字典节点归一化为标准问题条目；无效返回 None。"""
+                  min_confidence: float,
+                  collect: bool = False) -> Optional[Dict[str, Any]]:
+    """把单个（可能来自嵌套结构的）字典节点归一化为标准问题条目；无效返回 None。
+
+    collect=True 为「广撒网」模式：不在此阶段用严格取证 / 置信度丢弃候选，
+    而是记录 grounded 标志，交由 _rule_recheck 做确定性判定。
+    """
     quote = _pick(node, _FIELD_ALIASES["quote"])
     issue = _pick(node, _FIELD_ALIASES["issue"])
     detail = _pick(node, _FIELD_ALIASES["detail"])
@@ -845,10 +921,15 @@ def _node_to_item(node: Dict[str, Any], source: str,
     # 引用取证：优先用模型给出的 quote，缺失时从举证文本回译定位，仍无则丢弃
     if not quote:
         quote = _locate_quote(detail if len(detail) >= len(issue) else issue, source)
-    if not quote or (source and not _quote_grounded(quote, source)):
+    if not quote:
         return None
+    # collect 模式用宽松阈值保留候选；否则沿用严格取证 + 置信度门槛
+    grounded = _quote_grounded_loose(quote, source) if source else True
+    if not collect:
+        if not _quote_grounded(quote, source):
+            return None
     conf = _to_float(_pick(node, _FIELD_ALIASES["confidence"]))
-    if conf is not None and conf < min_confidence:
+    if conf is not None and conf < min_confidence and not collect:
         return None
     cat = _pick(node, _FIELD_ALIASES["category"])
     if not cat and ("条款" in node or "标准" in node or "准则" in node):
@@ -866,6 +947,7 @@ def _node_to_item(node: Dict[str, Any], source: str,
         "suggestion": _pick(node, _FIELD_ALIASES["suggestion"]),
         "severity": sev,
         "confidence": conf,
+        "grounded": grounded,
     }
 
 
@@ -921,12 +1003,13 @@ def _extract_json(text: str) -> Any:
     return None
 
 
-def _parse_issues(content: str, source: str = "", min_confidence: float = 0.6) -> List[Dict[str, Any]]:
+def _parse_issues(content: str, source: str = "", min_confidence: float = 0.6,
+                  collect: bool = False) -> List[Dict[str, Any]]:
     """从模型输出中提取问题条目（容忍 ```json 包裹、顶层对象与嵌套结构）。
 
     source 为当前片段原文，用于校验引用是否真实存在（避免模型编造）；
     分类不在枚举内时归范到最接近项；重复条目（同 quote+issue）去重。
-    min_confidence > 0 时丢弃模型把握度低于阈值的条目（抑制误报）。
+    collect=True 时不在此阶段丢弃候选，改由 _rule_recheck 统一判定。
     """
     payload = _extract_json(content)
     if payload is None:
@@ -934,7 +1017,7 @@ def _parse_issues(content: str, source: str = "", min_confidence: float = 0.6) -
     out: List[Dict[str, Any]] = []
     seen: set = set()
     for node in _flatten_nodes(payload):
-        item = _node_to_item(node, source, min_confidence)
+        item = _node_to_item(node, source, min_confidence, collect=collect)
         if not item:
             continue
         key = (_norm_text(item["quote"]), _norm_text(item["issue"]))
@@ -943,6 +1026,155 @@ def _parse_issues(content: str, source: str = "", min_confidence: float = 0.6) -
         seen.add(key)
         out.append(item)
     return out
+
+
+# ---------------------------------------------------------------------------
+# 规则复核（确定性验算）：AI 广撒网输出候选后，由规则做精确判定
+# ---------------------------------------------------------------------------
+# 小模型算术与引用能力有限：让它先尽量报候选，再由下面这些确定性规则
+# 剔除自相矛盾/实际一致的误报、并对验算通过项提升严重度，兼顾召回与准确率。
+_CN_DIGITS = {"零": 0, "〇": 0, "一": 1, "壹": 1, "二": 2, "贰": 2, "两": 2, "三": 3, "叁": 3,
+              "四": 4, "肆": 4, "五": 5, "伍": 5, "六": 6, "陆": 6, "七": 7, "柒": 7,
+              "八": 8, "捌": 8, "九": 9, "玖": 9}
+_CN_UNITS = {"十": 10, "拾": 10, "百": 100, "佰": 100, "千": 1000, "仟": 1000}
+_CN_SECTIONS = {"万": 10000, "亿": 100000000}
+_UNIT_MULT = {"亿元": 1e8, "亿": 1e8, "万元": 1e4, "万": 1e4, "元": 1.0, "圆": 1.0, "": 1.0}
+
+# 非贪婪 +?：让数字部分在首个单位处停下，避免把「万」并入数字段被重复折算
+# （贪婪写法会把「壹拾贰万元」切成 数字段「贰万」+ 单位「元」，得到 20000 而非 120000）
+_CN_AMT_RE = re.compile(
+    r"([零〇一二三四五六七八九十百千万亿壹贰叁肆伍陆柒捌玖拾佰仟]+?)(亿元|万元|亿|万|元|圆)")
+_NUM_AMT_RE = re.compile(r"([0-9]+(?:\.[0-9]+)?)\s*(亿元|万元|亿|万|元|圆)")
+# 形如「80+120+50=250」的显式算式
+_ARITH_RE = re.compile(
+    r"([0-9]+(?:\.[0-9]+)?(?:\s*\+\s*[0-9]+(?:\.[0-9]+)?)+)\s*=\s*([0-9]+(?:\.[0-9]+)?)")
+
+
+def _cn_to_int(cn: str) -> Optional[int]:
+    """中文大写数字串（壹拾贰万 / 三千五百）转整数；含无关字符或为空返回 None。"""
+    s = (cn or "").strip()
+    if not s:
+        return None
+    total, section, number = 0, 0, None
+    for c in s:
+        if c in _CN_DIGITS:
+            number = _CN_DIGITS[c]
+        elif c in _CN_UNITS:
+            section += (number if number is not None else 1) * _CN_UNITS[c]
+            number = None
+        elif c in _CN_SECTIONS:
+            if number is not None:
+                section += number
+            total += section * _CN_SECTIONS[c]
+            section, number = 0, None
+        else:
+            return None
+    if number is not None:
+        section += number
+    val = total + section
+    return val if val > 0 else None
+
+
+def _extract_cn_amount(text: str) -> Optional[float]:
+    """抽取中文大写金额（如「壹拾贰万元整」），返回折算后的数值；无则返回 None。"""
+    m = _CN_AMT_RE.search(text or "")
+    if not m:
+        return None
+    n = _cn_to_int(m.group(1))
+    if n is None:
+        return None
+    return float(n) * _UNIT_MULT.get(m.group(2), 1.0)
+
+
+def _extract_num_amount(text: str) -> Optional[float]:
+    """抽取阿拉伯数字金额（如「¥120,000.00」「300万元」），返回折算后的数值。"""
+    m = _NUM_AMT_RE.search(text or "")
+    if not m:
+        return None
+    try:
+        return float(m.group(1)) * _UNIT_MULT.get(m.group(2), 1.0)
+    except (TypeError, ValueError):
+        return None
+
+
+def _verify_arithmetic(detail: str) -> Optional[bool]:
+    """验证举证文本中的显式算式是否自洽。
+
+    True=算式成立（模型算术正确，该条可信）；False=自相矛盾（必为误报）；None=无算式。
+    """
+    m = _ARITH_RE.search(detail or "")
+    if not m:
+        return None
+    try:
+        left = [float(x) for x in re.split(r"\s*\+\s*", m.group(1))]
+        right = float(m.group(2))
+    except (TypeError, ValueError):
+        return None
+    return abs(sum(left) - right) < 0.01
+
+
+def _amount_case_conflict(item: Dict[str, Any]) -> Optional[bool]:
+    """判定「大写金额与小写金额不一致」类问题是否成立。
+
+    True=确证冲突；False=实际一致（误报）；None=不涉及此类问题或无法判定。
+    仅在模型明确表述为「大写…不一致/不符/矛盾」时才验算，避免误伤举例性表述。
+    """
+    text = " ".join(str(item.get(k) or "") for k in ("issue", "detail"))
+    if "大写" not in text:
+        return None
+    if not any(k in text for k in ("不一致", "不符", "矛盾", "错误")):
+        return None
+    cn = _extract_cn_amount(text)
+    num = _extract_num_amount(text)
+    if cn is None or num is None:
+        return None
+    return abs(cn - num) > 0.01
+
+
+def _rule_recheck(items: List[Dict[str, Any]], source: str = "",
+                  min_confidence: float = 0.45) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
+    """对 AI 广撒网候选做确定性复核，返回 (保留项, 统计)。
+
+    判定链：引用取证（防幻觉）→ 算式自洽 → 大小写金额 → 最终置信度门槛。
+    """
+    kept: List[Dict[str, Any]] = []
+    stat = {"in": len(items), "dropped_ungrounded": 0, "dropped_arith": 0,
+            "dropped_amount": 0, "dropped_lowconf": 0, "verified": 0}
+    for it in items:
+        # 1) 引用取证：原文中完全找不到依据的一律剔除
+        if source and not _quote_grounded_loose(it.get("quote", ""), source):
+            loc = _locate_quote(it.get("detail") or it.get("issue") or "", source)
+            if not loc:
+                stat["dropped_ungrounded"] += 1
+                continue
+            it["quote"] = clip(loc, 120)
+        # 2) 算式自洽：模型自己算错的必然是误报
+        arith = _verify_arithmetic(it.get("detail", ""))
+        if arith is False:
+            stat["dropped_arith"] += 1
+            continue
+        # 3) 大小写金额：模型称不一致但实际一致 → 误报
+        amt = _amount_case_conflict(it)
+        if amt is False:
+            stat["dropped_amount"] += 1
+            continue
+        # 4) 确定性验算通过 → 标记并提升为 high
+        if arith is True or amt is True:
+            it["verified"] = True
+            it["severity"] = "high"
+            prev = it.get("confidence")
+            it["confidence"] = 0.95 if prev is None else max(float(prev), 0.9)
+            stat["verified"] += 1
+        else:
+            it["verified"] = False
+        # 5) 最终置信度门槛
+        conf = it.get("confidence")
+        if conf is not None and float(conf) < min_confidence:
+            stat["dropped_lowconf"] += 1
+            continue
+        kept.append(it)
+    stat["out"] = len(kept)
+    return kept, stat
 
 
 # ---------------------------------------------------------------------------
@@ -1268,10 +1500,13 @@ def ai_check_file(path: str, ftype: str, issues_out: List[Issue],
     strict = bool(ai.get("strict_grounding", True))
     set_strict_grounding(strict)
     try:
-        min_conf = float(ai.get("min_confidence") or 0.6)
+        min_conf = float(ai.get("min_confidence") or 0.45)
     except (TypeError, ValueError):
-        min_conf = 0.6
+        min_conf = 0.45
     deep = bool(ai.get("deep_review", True))
+    # 规则复核：AI 广撒网输出候选后，由确定性规则验算剔除误报（可关闭，默认开启）
+    recheck = bool(ai.get("rule_recheck", True))
+    recheck_stat = {"in": 0, "out": 0, "verified": 0}
 
     added = 0
     fail_reasons: List[str] = []
@@ -1289,10 +1524,10 @@ def ai_check_file(path: str, ftype: str, issues_out: List[Issue],
             except Exception:  # noqa: BLE001 - 回调异常不影响核验
                 pass
 
-        # ---- 第一轮：主核查 ----
+        # ---- 第一轮：主核查（广撒网收集候选） ----
         items, err = _request_issues(ai, mode, _messages(ai, text, ref_text, rag_text, ftype),
                                      retry_n, min_conf, text, on_token=on_token,
-                                     cancel=cancel)
+                                     cancel=cancel, collect=recheck)
         if err:
             fail_reasons.append(f"{loc}：{err}")
             if err == "任务已取消":
@@ -1311,12 +1546,20 @@ def ai_check_file(path: str, ftype: str, issues_out: List[Issue],
             found = [f"{it['issue']}（{it['quote']}）" for it in items]
             items2, err2 = _request_issues(
                 ai, mode, _messages_review(ai, text, found, ref_text, rag_text, ftype),
-                retry_n, min_conf, text, on_token=on_token, cancel=cancel)
+                retry_n, min_conf, text, on_token=on_token, cancel=cancel,
+                collect=recheck)
             if err2:
                 # 复核轮失败不影响首轮结论，仅记录
                 fail_reasons.append(f"{loc}：深度复核未完成（{err2}）")
             else:
                 items = items + items2
+
+        # ---- 规则复核：对候选做确定性验算，剔除误报、提升确证项 ----
+        if recheck and items:
+            items, _st = _rule_recheck(items, text, min_conf)
+            recheck_stat["in"] += _st["in"]
+            recheck_stat["out"] += _st["out"]
+            recheck_stat["verified"] += _st["verified"]
 
         for it in items:
             gkey = (_norm_text(it["quote"]), _norm_text(it["issue"]))
@@ -1340,10 +1583,13 @@ def ai_check_file(path: str, ftype: str, issues_out: List[Issue],
             ))
             added += 1
 
-    # 知识库命中情况并入文件级说明，界面徽标 / 任务日志可直接看到
+    # 知识库命中与规则复核情况并入文件级说明，界面徽标 / 任务日志可直接看到
     kb_note = ""
     if kb_on:
         kb_note = f"；知识库命中 {len(rag_refs)} 段"
+    if recheck and recheck_stat["in"]:
+        kb_note += (f"；规则复核 {recheck_stat['in']}→{recheck_stat['out']} 条"
+                    f"（验算确证 {recheck_stat['verified']} 条）")
 
     if fail_reasons and added == 0:
         ai_activity.log_event("verify", model=str(ai.get("model", "")),
@@ -1358,9 +1604,15 @@ def ai_check_file(path: str, ftype: str, issues_out: List[Issue],
     return added, ("完成" + (f"（{sync_note}）" if sync_note else "") + kb_note)
 
 
+def _ai_mode(ai: Dict[str, Any]) -> str:
+    """取当前推理模式：local（本地小模型）/ online（联网大模型）。"""
+    return "local" if str(ai.get("mode") or "local") == "local" else "online"
+
+
 def _messages(ai: Dict[str, Any], text: str, ref_text: str = "", rag_text: str = "",
               ftype: str = "") -> List[Dict[str, str]]:
-    return _base_messages(ai, compose_system(ai, _SYS_PROMPT), text, ref_text, rag_text, ftype)
+    return _base_messages(ai, compose_system(ai, _sys_prompt(_ai_mode(ai))),
+                          text, ref_text, rag_text, ftype)
 
 
 def _messages_review(ai: Dict[str, Any], text: str, found: List[str],
@@ -1393,7 +1645,7 @@ def _base_messages(ai: Dict[str, Any], sys_txt: str, text: str,
                        + rag_text,
         })
     # 专项技能：在参考资料之后、输出契约之前注入，使技能提示聚焦且不被格式契约覆盖
-    skill_sec = build_skill_section(ai, ftype)
+    skill_sec = build_skill_section(ai, ftype, _ai_mode(ai))
     if skill_sec:
         msgs.append({"role": "system", "content": skill_sec})
     # 输出契约放最后：紧邻 user 消息，用于压过 preset / 资料中对输出格式的描述
@@ -1407,10 +1659,12 @@ def _request_issues(ai: Dict[str, Any], mode: str, msgs: List[Dict[str, str]],
                     retry_n: int, min_confidence: float,
                     source_text: str,
                     on_token: Optional[Callable[[str, str], None]] = None,
-                    cancel: Optional[Callable[[], bool]] = None) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+                    cancel: Optional[Callable[[], bool]] = None,
+                    collect: bool = False) -> Tuple[List[Dict[str, Any]], Optional[str]]:
     """执行一次模型请求并解析问题列表，返回 (问题条目, 错误说明)。
 
     命中响应缓存时直接复用；失败按 retry_n 重试；解析阶段按 source_text 校验引用真实性。
+    collect=True 时不做严格过滤，仅收集候选供 _rule_recheck 判定。
     """
     cache_cfg = ai.get("cache") or {}
     ckey = None
@@ -1419,7 +1673,7 @@ def _request_issues(ai: Dict[str, Any], mode: str, msgs: List[Dict[str, str]],
                           json.dumps(msgs, ensure_ascii=False))
         cached = _cache_get(ckey, int(cache_cfg.get("ttl") or 3600))
         if cached is not None:
-            return _parse_issues(cached, source_text, min_confidence), None
+            return _parse_issues(cached, source_text, min_confidence, collect=collect), None
     last_err: Optional[str] = None
     for attempt in range(retry_n + 1):
         if cancel and cancel():
@@ -1433,7 +1687,7 @@ def _request_issues(ai: Dict[str, Any], mode: str, msgs: List[Dict[str, str]],
                     else _call_openai(ai, msgs)
             if ckey:
                 _cache_put(ckey, content, int(cache_cfg.get("max_entries") or 200))
-            return _parse_issues(content, source_text, min_confidence), None
+            return _parse_issues(content, source_text, min_confidence, collect=collect), None
         except AiError as exc:
             last_err = str(exc)
             continue
@@ -1468,7 +1722,8 @@ def build_prompt_record(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         "base_url": base_url,
         "deep_review": bool(ai.get("deep_review", True)),
         "strict_grounding": bool(ai.get("strict_grounding", True)),
-        "min_confidence": ai.get("min_confidence", 0.6),
+        "min_confidence": ai.get("min_confidence", 0.45),
+        "rule_recheck": bool(ai.get("rule_recheck", True)),
         "max_chars": int(ai.get("max_chars") or 3000),
         "max_requests": int(ai.get("max_requests") or 10),
         "retry": int(ai.get("retry") or 0),
@@ -1481,11 +1736,9 @@ def build_prompt_record(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         "kb_chunks": int(kb_stat.get("total_chunks") or 0),
         "kb_embed": bool(kb_stat.get("embed_available")),
         "coverage": "全篇均匀覆盖（首段 + 末段 + 等距抽样）",
-        "active_skills": [{"id": s["id"], "name": s["name"], "builtin": s.get("builtin", True)}
-                          for s in get_active_skill_list(ai)],
+        # 技能详情（名称 / 提示词正文）不再进入报告记录：仅保留数量，避免报告暴露细节
         "skill_count": len(get_active_skill_list(ai)),
-        "skill_prompts": build_skill_section(ai, "") if get_active_skill_list(ai) else "",
-        "system_prompt": compose_system(ai, _SYS_PROMPT),
+        "system_prompt": compose_system(ai, _sys_prompt(_ai_mode(ai))),
         "review_prompt": review_prompt,
         "recorded_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }

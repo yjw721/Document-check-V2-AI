@@ -35,8 +35,9 @@ ai_cfg = {
     }],
 }
 rec = ai_checker.build_prompt_record(ai_cfg)
-chk("记录含 active_skills", rec.get("skill_count") == 3, rec.get("skill_count"))
-chk("记录含 skill_prompts", bool(rec.get("skill_prompts")), rec.get("skill_prompts"))
+chk("记录含技能数量", rec.get("skill_count") == 3, rec.get("skill_count"))
+chk("记录不含技能明细（active_skills）", "active_skills" not in rec)
+chk("记录不含技能提示词（skill_prompts）", "skill_prompts" not in rec)
 
 res1 = FileResult("评估报告.docx", "D:/x/评估报告.docx", "Word", 12345, STATUS_ISSUE, issues=[
     Issue(rule_key="ai_verify", rule_title="AI 智能核验", severity="high",
@@ -57,11 +58,13 @@ for t in d.tables:
         for c in row.cells:
             all_text += "\n" + c.text
 
-chk("6.1 含「启用专项技能」行", "启用专项技能" in all_text)
-chk("报告含内置技能名「财务数据勾稽」", "财务数据勾稽" in all_text)
-chk("报告含自定义技能名「合同风险点」", "合同风险点" in all_text)
-chk("报告含专项技能提示词区块", "【启用的专项技能提示词】" in all_text)
-chk("报告含自定义技能提示词正文", "核查违约责任与交付节点是否明确" in all_text)
+chk("6.1 含「启用专项技能」数量行", "启用专项技能" in all_text)
+chk("报告含技能数量值", "3 个" in all_text)
+# 技能详情一律不得出现在报告中
+chk("报告不含内置技能名「财务数据勾稽」", "财务数据勾稽" not in all_text)
+chk("报告不含自定义技能名「合同风险点」", "合同风险点" not in all_text)
+chk("报告不含专项技能提示词区块", "【启用的专项技能提示词】" not in all_text)
+chk("报告不含自定义技能提示词正文", "核查违约责任与交付节点是否明确" not in all_text)
 
 print(f"\n结果：{ok} 通过 / {fail} 失败")
 sys.exit(1 if fail else 0)

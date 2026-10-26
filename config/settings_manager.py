@@ -142,7 +142,8 @@ DEFAULTS: Dict[str, Any] = {
         # —— 增强审核力度 ——
         "deep_review": True,                   # 每段追加一轮「补漏复核」请求（耗时约翻倍，关闭可提速）
         "strict_grounding": True,              # 严格取证：引用须逐字命中原文（短引用须完整命中），抑制幻觉
-        "min_confidence": 0.6,                 # 置信度门槛：模型把握度低于该值的问题直接丢弃（0 = 不过滤）
+        "min_confidence": 0.45,                # 置信度门槛：候选收集阶段放宽，由规则复合作最终判定（0 = 不过滤）
+        "rule_recheck": True,                  # 规则复核：AI 广撒网后由确定性验算剔除误报、提升确证项
         # —— 专项技能（SKILL）——
         "active_skills": ["financial_reconciliation", "terminology_consistency"],
         # 启用的技能 id 集合（含内置与自定义）；空列表 = 全部关闭；缺省字段 = 自动启用内置 default_on
