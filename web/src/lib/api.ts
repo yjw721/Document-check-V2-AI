@@ -67,6 +67,33 @@ export interface AiTaskOverride {
   scope?: "all" | "issues" | "";
 }
 
+/* ---------- 统一数据层：AI 生成产出草稿箱 ---------- */
+export interface DraftItem {
+  id: string;
+  bid: string;
+  kind: string;
+  source: string;
+  source_label: string;
+  created_at: string;
+  status: "pending" | "accepted" | "rejected";
+  filename?: string;
+  stats: { rules: number; wordbanks: number; entries: number };
+  filter?: Record<string, unknown>;
+}
+export interface DraftDetail extends DraftItem {
+  rules: Record<string, unknown>[];
+  wordbanks: Record<string, unknown>[];
+}
+export interface DataStoreStats {
+  version: number;
+  total: number;
+  by_status: Record<string, number>;
+  by_source: Record<string, number>;
+  accepted_rules: number;
+  accepted_entries: number;
+  path?: string;
+}
+
 /* ---------- 工作区隔离 + 访问口令（多用户 / 局域网共享） ---------- */
 const WS_KEY = "docchk_ws";
 const TOKEN_KEY = "docchk_token";
@@ -341,6 +368,22 @@ export const api = {
     ),
   aiBuildCancel: (bid: string) =>
     request<{ ok: boolean; message?: string }>("POST", "/api/ai/build/cancel", { bid }),
+
+  /* ---------- 统一数据层：AI 生成产出草稿箱 ---------- */
+  drafts: (p?: { status?: string; source?: string }) => {
+    const q = new URLSearchParams();
+    if (p?.status) q.set("status", p.status);
+    if (p?.source) q.set("source", p.source);
+    const qs = q.toString();
+    return request<{ ok: boolean; items: DraftItem[] }>("GET", `/api/ai/drafts${qs ? `?${qs}` : ""}`);
+  },
+  draft: (id: string) => request<{ ok: boolean; draft: DraftDetail }>("GET", `/api/ai/drafts/${encodeURIComponent(id)}`),
+  draftAccept: (id: string) =>
+    request<{ ok: boolean; message: string; added: { rules: number; entries: number } }>(
+      "POST", `/api/ai/drafts/${encodeURIComponent(id)}/accept`),
+  draftReject: (id: string) =>
+    request<{ ok: boolean; message: string }>("POST", `/api/ai/drafts/${encodeURIComponent(id)}/reject`),
+  dataStats: () => request<{ ok: boolean; stats: DataStoreStats }>("GET", "/api/data/stats"),
 
   /* ---------- 本地 AI 自学习记忆（成对样本） ---------- */
   aiMemory: () => request<AiMemoryData>("GET", "/api/ai_memory"),

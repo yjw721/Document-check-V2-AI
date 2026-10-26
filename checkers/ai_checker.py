@@ -1714,6 +1714,13 @@ def build_prompt_record(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
             kb_stat = rag_store.kb_status()
         except Exception:  # noqa: BLE001 - 统计失败不影响归档
             kb_stat = {}
+    # 统一数据层：AI 生成产出草稿箱统计（供报告溯源「产出→入库→检测」闭环）
+    ds_stat: Dict[str, Any] = {}
+    try:
+        from checkers.datastore import store_stats
+        ds_stat = store_stats()
+    except Exception:  # noqa: BLE001 - 统计失败不影响归档
+        ds_stat = {}
     return {
         "enabled": bool(ai.get("enabled")),
         "mode": "本地 AI（Ollama，零联网）" if mode == "local" else "联网 AI（OpenAI 兼容接口）",
@@ -1738,6 +1745,8 @@ def build_prompt_record(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         "coverage": "全篇均匀覆盖（首段 + 末段 + 等距抽样）",
         # 技能详情（名称 / 提示词正文）不再进入报告记录：仅保留数量，避免报告暴露细节
         "skill_count": len(get_active_skill_list(ai)),
+        # 统一数据层：生成产出草稿箱与入库情况（全链路溯源）
+        "datastore": ds_stat,
         "system_prompt": compose_system(ai, _sys_prompt(_ai_mode(ai))),
         "review_prompt": review_prompt,
         "recorded_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),

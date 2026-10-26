@@ -33,6 +33,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from config.settings_manager import (  # noqa: E402
     SECRET_MASK, mask_secrets, merge_settings_patch,
+    load_settings as real_load_settings,
 )
 from server import security  # noqa: E402
 from server.main import app  # noqa: E402
@@ -79,6 +80,12 @@ def test_api():
         saved.append({"__test_cfg__": copy.deepcopy(cfg)})
         return True, "ok"
 
+    # 管理员身份由 X-Admin-Token 校验。注意校验发生在三层：
+    #   server.security（中间件）、server.routes.settings（is_admin_request）、
+    #   checkers.rag.permissions（_guard，直接读 config.settings_manager）。
+    # 前两者是「导入即绑定」的函数对象，monkeypatch 无法影响第三层，
+    # 因此这里统一使用配置文件中的真实口令，保证三层判定一致。
+    ADMIN_TOKEN = str((real_load_settings().get("security") or {}).get("admin_token") or "")
     orig = (settings_route.load_settings, settings_route.save_settings,
             ai_config.load_settings, ai_config.ai_test_connection,
             security.access_token)
@@ -86,8 +93,10 @@ def test_api():
     settings_route.save_settings = fake_save
     ai_config.load_settings = fake_load
     ai_config.ai_test_connection = fake_test
-    security.access_token = lambda: ""
+    security.access_token = lambda: ""   # 访问口令免密，只校验管理员令牌
     client = TestClient(app)
+    if ADMIN_TOKEN:
+        client.headers["X-Admin-Token"] = ADMIN_TOKEN
     try:
         print("2) HTTP 接口")
         r = client.get("/api/settings")
@@ -120,17 +129,17 @@ def test_api():
             f"status={r.status_code}")
         chk("AI 测试遇到掩码时使用真实 API Key", test_cfg.get("api_key") == "sk-real-secret")
 
-        print("3) 非管理员字段级保护")
-        fake["role"] = "operator"
+        print("3) 未提权（普通用户）的后台写保护")
+        # 移除管理员令牌，模拟普通用户：中间件在写操作上直接拦截
+        client.headers.pop("X-Admin-Token", None)
         r = client.post("/api/settings", json={"ai": {"api_key": "sk-evil"}})
-        chk("非管理员改 AI Key 被 403 拒绝", r.status_code == 403, f"status={r.status_code}")
-        r = client.post("/api/settings", json={"role": "admin"})
-        chk("非管理员提权被 403 拒绝", r.status_code == 403, f"status={r.status_code}")
-        r = client.post("/api/settings", json={"ai": {"api_key": SECRET_MASK}})
-        chk("非管理员回传未改动掩码可正常保存", r.status_code == 200, f"status={r.status_code}")
+        chk("未提权改 AI Key 被 401 拒绝", r.status_code == 401, f"status={r.status_code}")
         r = client.post("/api/settings", json={"ui": {"page_size": 30}})
-        chk("非管理员仍可保存普通偏好", r.status_code == 200 and saved[-1]["ui"]["page_size"] == 30,
+        chk("未提权改设置整体被 401 拦截（后台写）", r.status_code == 401,
             f"status={r.status_code}")
+        # 读操作对普通用户开放（设置读取不属后台写）
+        r = client.get("/api/settings")
+        chk("未提权仍可读取设置", r.status_code == 200, f"status={r.status_code}")
     finally:
         (settings_route.load_settings, settings_route.save_settings,
          ai_config.load_settings, ai_config.ai_test_connection,

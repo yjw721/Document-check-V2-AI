@@ -8,6 +8,7 @@ from server import security
 from server.routes import (
     ai_build,
     ai_config,
+    ai_drafts,
     ai_memory,
     detection,
     dicts,
@@ -33,6 +34,7 @@ ROUTERS = [
     settings.router,     # 全局设置
     ai_config.router,    # AI 核验配置 / 参考资料 / 日志
     ai_build.router,     # AI 规则词库智能生成
+    ai_drafts.router,    # 统一数据层：生成产出草稿箱（采纳 / 丢弃 / 统计）
     ai_memory.router,    # 本地 AI 自学习
     rag.router,          # 本地知识库问答
     ocr.router,          # OCR 状态（核验侧）

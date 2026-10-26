@@ -706,6 +706,17 @@ class ReportBuilder:
         _skill_cnt = int(ai_rec.get("skill_count") or 0)
         if _skill_cnt:
             conf_rows.append(("启用专项技能", f"{_skill_cnt} 个"))
+        # 统一数据层：生成产出 → 采纳入库 → 检测生效 的闭环溯源
+        _ds = ai_rec.get("datastore") or {}
+        if isinstance(_ds, dict) and _ds.get("total"):
+            _by = _ds.get("by_status") or {}
+            conf_rows.append((
+                "AI 产出数据层",
+                f"草稿 {_ds.get('total')} 批（待确认 {_by.get('pending', 0)} / "
+                f"已采纳 {_by.get('accepted', 0)} / 已丢弃 {_by.get('rejected', 0)}）；"
+                f"已采纳入库 规则 {_ds.get('accepted_rules', 0)} 条、"
+                f"词条 {_ds.get('accepted_entries', 0)} 条",
+            ))
         _kv_table(doc, conf_rows)
 
         sys_prompt = str(ai_rec.get("system_prompt") or "").strip()

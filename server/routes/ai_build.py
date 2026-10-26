@@ -77,6 +77,7 @@ def _build_runner(bid: str, kind: str, text: str, raw: bytes, filename: str) -> 
         ok, msg, result = _brun(kind, text=text, raw=raw, filename=filename,
                                 ai=ai, on_log=on_log, on_token=on_token)
         filter_stat: Dict[str, Any] = {}
+        draft_id = ""
         if ok:
             _blog(bid, "stage", "[validate] 入库前置校验（过滤无效/重复规则）…")
             filter_stat = rule_filter_generated(result, channel="ai_build")
@@ -84,12 +85,22 @@ def _build_runner(bid: str, kind: str, text: str, raw: bytes, filename: str) -> 
             _mark_source(result, src, label)
             _blog(bid, "stage", f"[done] 生成完成：词库 {len(result['wordbanks'])} 组、"
                                f"规则 {len(result['rules'])} 条")
+            # 产出持久化到统一数据层（草稿箱）：常驻任务数超限时仅回收内存状态，
+            # 产出不会随之丢失，可在草稿箱中确认后并入正式规则 / 词库。
+            try:
+                from checkers.datastore import add_draft
+                draft_id = add_draft(bid, kind, result, src, label, filter_stat, filename) or ""
+                if draft_id:
+                    _blog(bid, "stage", f"[store] 已存入草稿箱（{draft_id}），确认后可并入规则/词库")
+            except Exception as exc:  # noqa: BLE001 - 存储失败不影响本次生成结果展示
+                _blog(bid, "stage", f"[store] 草稿箱写入失败：{type(exc).__name__}")
         else:
             _blog(bid, "stage", f"[done] 生成结束：{msg}")
         with _TASK_LOCK:
             st = _BUILD_STATE.setdefault(bid, {})
             st.update({"running": False, "done": True, "ok": ok,
-                       "message": msg, "result": result, "filter": filter_stat})
+                       "message": msg, "result": result, "filter": filter_stat,
+                       "draft_id": draft_id})
     except BuildAborted:
         _blog(bid, "stage", "[done] 已中止生成任务")
         with _TASK_LOCK:
