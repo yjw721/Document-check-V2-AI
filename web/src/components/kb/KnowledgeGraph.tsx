@@ -17,6 +17,8 @@ import type { KbGraphNode, KbGraphResp } from "../../lib/types";
 
 const DOC_COLOR = "#ff7eb6";
 const SEC_COLORS = ["#56d6ff", "#8b9bff", "#b98bff", "#d68bff"];
+const FONT_STACK = '"Microsoft YaHei", "PingFang SC", "Segoe UI", system-ui, sans-serif';
+const LABEL_BG = "rgba(7, 8, 22, 0.78)";
 
 const REP = 1500;
 const DAMP = 0.9;
@@ -35,6 +37,25 @@ function clamp(v: number, min: number, max: number): number {
 
 function easeOutCubic(v: number): number {
   return 1 - Math.pow(1 - v, 3);
+}
+
+function fillRoundedRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number
+) {
+  const rr = Math.max(0, Math.min(r, w / 2, h / 2));
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr);
+  ctx.arcTo(x + w, y + h, x, y + h, rr);
+  ctx.arcTo(x, y + h, x, y, rr);
+  ctx.arcTo(x, y, x + w, y, rr);
+  ctx.closePath();
+  ctx.fill();
 }
 
 function nodeColor(n: KbGraphNode): string {
@@ -260,6 +281,7 @@ export default function KnowledgeGraph({
   const rafRef = useRef(0);
   const camRafRef = useRef(0);
   const runningRef = useRef(false);
+  const autoFitRef = useRef(true);
   const speedRef = useRef(1);
   const lastFrameRef = useRef(0);
   const sizeRef = useRef({ w: 800, h: 520, dpr: 1 });
@@ -400,6 +422,12 @@ export default function KnowledgeGraph({
     const sprite = 1 / Math.max(0.0001, scale);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
+    const glow = ctx.createRadialGradient(w * 0.5, h * 0.44, 0, w * 0.5, h * 0.44, Math.max(w, h) * 0.68);
+    glow.addColorStop(0, "rgba(121, 40, 202, 0.12)");
+    glow.addColorStop(0.55, "rgba(0, 212, 255, 0.04)");
+    glow.addColorStop(1, "rgba(11, 11, 28, 0)");
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, w, h);
     ctx.save();
     ctx.translate(ox, oy);
     ctx.scale(scale, scale);
@@ -485,19 +513,27 @@ export default function KnowledgeGraph({
         const text = nodeLabel(n);
         const fontPx = n.type === "doc" ? 12 : 10;
         const fontWorld = fontPx * sprite;
-        ctx.font = `${fontWorld}px -apple-system, "PingFang SC", sans-serif`;
+        ctx.font = `${fontWorld}px ${FONT_STACK}`;
         const tw = ctx.measureText(text).width;
         const x = n.x;
         const y = n.y + n.r + 9 * sprite;
-        const pad = 2 * sprite;
-        const box = { x1: x - tw / 2 - pad, y1: y - fontWorld, x2: x + tw / 2 + pad, y2: y + fontWorld * 0.35 };
+        const pad = 3 * sprite;
+        const box = {
+          x1: x - tw / 2 - pad,
+          y1: y - fontWorld - pad * 0.6,
+          x2: x + tw / 2 + pad,
+          y2: y + fontWorld * 0.3 + pad * 0.6,
+        };
         if (boxes.some((b) => !(box.x1 > b.x2 || box.x2 < b.x1 || box.y1 > b.y2 || box.y2 < b.y1))) {
           return;
         }
         boxes.push(box);
         const dim = focusSet && !focusSet.has(n.id);
-        ctx.globalAlpha = dim ? 0.3 : 0.92;
-        ctx.fillStyle = n.type === "doc" ? "#ffd0e6" : "#dff3ff";
+        ctx.globalAlpha = dim ? 0.32 : 1;
+        ctx.fillStyle = LABEL_BG;
+        fillRoundedRect(ctx, box.x1, box.y1, box.x2 - box.x1, box.y2 - box.y1, 4 * sprite);
+        ctx.globalAlpha = dim ? 0.34 : 0.95;
+        ctx.fillStyle = n.type === "doc" ? "#ffd8ea" : "#e4f4ff";
         ctx.textAlign = "center";
         ctx.fillText(text, x, y);
         ctx.globalAlpha = 1;
@@ -568,8 +604,13 @@ export default function KnowledgeGraph({
         oy: h / 2 - cy * scale,
       };
       if (animated) {
+        autoFitRef.current = false;
         animateViewTo(target, 320);
       } else {
+        if (camRafRef.current) {
+          cancelAnimationFrame(camRafRef.current);
+          camRafRef.current = 0;
+        }
         viewRef.current = target;
         setZoom(scale);
         drawRef.current();
@@ -580,6 +621,7 @@ export default function KnowledgeGraph({
 
   const focusNode = useCallback(
     (node: SimNode) => {
+      autoFitRef.current = false;
       const { w, h } = sizeRef.current;
       const scale = clamp(Math.max(1.12, Math.min(2.2, viewRef.current.scale)), MIN_SCALE, 2.2);
       animateViewTo(
@@ -620,6 +662,7 @@ export default function KnowledgeGraph({
     (clientX: number, clientY: number, factor: number, animated = false) => {
       const canvas = canvasRef.current;
       if (!canvas) return;
+      autoFitRef.current = false;
       if (camRafRef.current) {
         cancelAnimationFrame(camRafRef.current);
         camRafRef.current = 0;
@@ -669,7 +712,12 @@ export default function KnowledgeGraph({
       if (a <= 0.015) {
         runningRef.current = false;
         setAnimating(false);
-        drawRef.current();
+        if (autoFitRef.current) {
+          autoFitRef.current = false;
+          fitView(true);
+        } else {
+          drawRef.current();
+        }
         return;
       }
       const now = performance.now();
@@ -683,10 +731,11 @@ export default function KnowledgeGraph({
       rafRef.current = requestAnimationFrame(frame);
     };
     rafRef.current = requestAnimationFrame(frame);
-  }, [tickOnce]);
+  }, [fitView, tickOnce]);
 
   const pauseAnimation = useCallback(() => {
     runningRef.current = false;
+    autoFitRef.current = false;
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     rafRef.current = 0;
     setAnimating(false);
@@ -718,10 +767,11 @@ export default function KnowledgeGraph({
       n.fx = null;
       n.fy = null;
     });
-    const warmup = Math.max(40, Math.min(WARMUP_TICKS, Math.round(48000 / Math.max(1, simRef.current.length))));
+    const warmup = Math.max(40, Math.min(WARMUP_TICKS, Math.round(60000 / Math.max(1, simRef.current.length))));
     for (let i = 0; i < warmup; i++) tickOnce(1);
     alphaRef.current = 0.48;
-    fitView(true);
+    fitView(false);
+    autoFitRef.current = true;
     startLoop();
   }, [fitView, startLoop, tickOnce]);
 
@@ -763,6 +813,7 @@ export default function KnowledgeGraph({
       hoverRef.current = null;
       setTip(null);
       setAnimating(false);
+      autoFitRef.current = false;
       drawRef.current();
       return;
     }
@@ -776,10 +827,11 @@ export default function KnowledgeGraph({
     hoverRef.current = null;
     setTip(null);
     setCursor("grab");
-    const warmup = Math.max(40, Math.min(WARMUP_TICKS, Math.round(48000 / Math.max(1, sim.length))));
+    const warmup = Math.max(40, Math.min(WARMUP_TICKS, Math.round(60000 / Math.max(1, sim.length))));
     for (let i = 0; i < warmup; i++) tickOnce(1);
     alphaRef.current = 0.55;
     fitView(false);
+    autoFitRef.current = true;
     startLoop();
   }, [data, fitView, startLoop, tickOnce]);
 
@@ -982,6 +1034,7 @@ export default function KnowledgeGraph({
     if (e.pointerType === "mouse" && e.button !== 0) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
+    autoFitRef.current = false;
     rootRef.current?.focus({ preventScroll: true });
     canvas.setPointerCapture?.(e.pointerId);
     pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -1140,7 +1193,7 @@ export default function KnowledgeGraph({
       onKeyDown={onKeyDown}
       aria-label="知识思维图谱，支持缩放、平移、搜索和动画控制"
       className={
-        "flex flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#0b0b1c] outline-none " +
+        "kg-graph flex flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#0b0b1c] outline-none " +
         (fullscreen ? "fixed inset-0 z-[100] h-screen w-screen rounded-none border-0" : "")
       }
     >

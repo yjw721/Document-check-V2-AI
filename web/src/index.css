@@ -564,6 +564,74 @@
   color: var(--text-dim);
 }
 
+/* ---------- 知识思维图谱：恒定深色可视化面板 ----------
+   画布与标签按深色底绘制；这里强制恢复白色文字/边框，
+   避免通用主题映射把文字改成深色后出现「深字压深底」的重复配色。 */
+html .kg-graph {
+  --kg-text: rgba(255, 255, 255, 0.94);
+  --kg-dim: rgba(255, 255, 255, 0.62);
+  --kg-faint: rgba(255, 255, 255, 0.38);
+  background-color: #0b0b1c !important;
+  color: var(--kg-text);
+}
+html .kg-graph.kg-graph .text-white {
+  color: var(--kg-text);
+}
+html .kg-graph.kg-graph .text-white\/20,
+html .kg-graph.kg-graph .text-white\/25,
+html .kg-graph.kg-graph .text-white\/30,
+html .kg-graph.kg-graph .text-white\/35,
+html .kg-graph.kg-graph .text-white\/40 {
+  color: var(--kg-faint);
+}
+html .kg-graph.kg-graph .text-white\/45,
+html .kg-graph.kg-graph .text-white\/50,
+html .kg-graph.kg-graph .text-white\/55,
+html .kg-graph.kg-graph .text-white\/60,
+html .kg-graph.kg-graph .text-white\/65,
+html .kg-graph.kg-graph .text-white\/70 {
+  color: var(--kg-dim);
+}
+html .kg-graph.kg-graph .text-white\/75,
+html .kg-graph.kg-graph .text-white\/80,
+html .kg-graph.kg-graph .text-white\/85,
+html .kg-graph.kg-graph .text-white\/90 {
+  color: var(--kg-text);
+}
+html .kg-graph.kg-graph .hover\:text-white:hover,
+html .kg-graph.kg-graph .hover\:text-white\/90:hover {
+  color: #ffffff;
+}
+html .kg-graph.kg-graph .placeholder\:text-white\/30::placeholder,
+html .kg-graph.kg-graph .placeholder\:text-white\/35::placeholder {
+  color: var(--kg-faint);
+}
+html .kg-graph.kg-graph .border-white\/10 {
+  border-color: rgba(255, 255, 255, 0.1);
+}
+html .kg-graph.kg-graph .border-white\/15 {
+  border-color: rgba(255, 255, 255, 0.15);
+}
+html .kg-graph.kg-graph .bg-white\/10 {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+html .kg-graph.kg-graph .bg-white\/15 {
+  background-color: rgba(255, 255, 255, 0.14);
+}
+html .kg-graph.kg-graph .bg-white\/\[0\.025\] {
+  background-color: rgba(255, 255, 255, 0.03);
+}
+html .kg-graph.kg-graph .bg-white\/\[0\.04\] {
+  background-color: rgba(255, 255, 255, 0.045);
+}
+html .kg-graph.kg-graph .hover\:bg-white\/10:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+html .kg-graph select option {
+  background-color: #12122a;
+  color: rgba(255, 255, 255, 0.9);
+}
+
 /* 浅色主题：把组件中的 Tailwind 白色 utility 映射为主题变量 */
 [data-theme="light"] .text-white {
   color: var(--text);
