@@ -18,6 +18,11 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
+# 必须在模块级导入：本文件启用了 PEP 563（from __future__ import annotations），
+# require() 中 `_guard(request: Request)` 的注解是字符串，FastAPI 只能从模块 globals 解析。
+# 若改为函数体内局部导入，注解无法解析，request 会被当成必填 query 参数导致全部守卫路由 422。
+from fastapi import Request
+
 # ---------------------------------------------------------------------------
 # 角色定义
 # ---------------------------------------------------------------------------
@@ -152,7 +157,7 @@ def require(cap: str):
 
         @router.post("/api/rag/clear", dependencies=[Depends(require("kb.delete"))])
     """
-    from fastapi import Depends, HTTPException, Request
+    from fastapi import Depends, HTTPException
     import hmac
 
     def _guard(request: Request) -> None:
