@@ -78,7 +78,11 @@ export interface DraftItem {
   status: "pending" | "accepted" | "rejected";
   filename?: string;
   stats: { rules: number; wordbanks: number; entries: number };
+  /** 入库前置校验统计（过滤了多少条等） */
   filter?: Record<string, unknown>;
+  /** 处置说明（如「入库规则 x 条 / 词条 y 条」） */
+  note?: string;
+  handled_at?: string;
 }
 export interface DraftDetail extends DraftItem {
   rules: Record<string, unknown>[];

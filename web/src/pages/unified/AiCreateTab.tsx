@@ -57,6 +57,8 @@ export default function AiCreateTab() {
   const [buildLogs, setBuildLogs] = useState<BuildLogsResp | null>(null);
   const [filterStat, setFilterStat] = useState<RuleFilterStat | null>(null);
   const [curBid, setCurBid] = useState("");
+  /* 产出落统一数据层后的草稿 id：提示用户去草稿箱确认后入库 */
+  const [draftId, setDraftId] = useState("");
   const [wbSel, setWbSel] = useState<Record<string, boolean>>({});
   const [ruleSel, setRuleSel] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState<"wb" | "rules" | null>(null);
@@ -111,6 +113,7 @@ export default function AiCreateTab() {
     setBusy(kind);
     setResult(null);
     setBuildLogs(null);
+    setDraftId("");
     try {
       const r = kind === "dialogue"
         ? await api.aiBuildDialogue(dialogue.trim())
@@ -146,6 +149,7 @@ export default function AiCreateTab() {
           } else if (st.ok && st.result) {
             pick(st.result);
             reportFilter(st.filter, label);
+            setDraftId(st.draft_id || "");
           } else {
             toast(st.message || "生成失败", "err");
           }
@@ -597,6 +601,22 @@ export default function AiCreateTab() {
       {/* 生成结果预览仅在「对话式 / 文本式」子标签展示，切到自学习页不再残留上一轮结果 */}
       {(sub === "dialogue" || sub === "text") && result && (
         <HoloCard className="p-4" glow="sm">
+          {/* 产出已永久落草稿箱：即便此处不立即加入，也可在草稿箱中随时确认入库 */}
+          {draftId && (
+            <div className="mb-3 flex flex-wrap items-center gap-2.5 rounded-2xl border border-white/10 bg-white/[0.04] px-3.5 py-2.5">
+              <span className="text-[12px] text-white/60">
+                本轮产出已永久存入草稿箱（<code className="text-white/45">{draftId}</code>），
+                可稍后在「AI 产出草稿箱」中确认后并入正式库。
+              </span>
+              <HoloButton
+                size="sm"
+                className="ml-auto"
+                onClick={() => (window.location.hash = "#unified/drafts")}
+              >
+                前往草稿箱 →
+              </HoloButton>
+            </div>
+          )}
           <div className="flex flex-wrap items-center gap-2.5">
             <span className="text-sm font-semibold text-white">生成结果预览</span>
             <span className="text-xs text-white/40">勾选要加入的条目，确认后写入自定义词库 / 自定义规则</span>

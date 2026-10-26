@@ -472,6 +472,8 @@ export interface BuildLogsResp {
     filter?: RuleFilterStat;
     /** 任务已被用户中止 */
     cancelled?: boolean;
+    /** 产出落统一数据层后的草稿 id（可在「AI 产出草稿箱」确认后入库） */
+    draft_id?: string;
   };
 }
 

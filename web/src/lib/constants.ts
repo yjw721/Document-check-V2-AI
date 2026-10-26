@@ -26,6 +26,7 @@ export const UNI_TABS = [
   { key: "wordbanks", name: "词库总览", ic: "📚" },
   { key: "template", name: "词库标准规则批量导入", ic: "📥" },
   { key: "aiCreate", name: "AI 规则词库智能生成", ic: "🤖" },
+  { key: "drafts", name: "AI 产出草稿箱", ic: "🗄️" },
   { key: "scan", name: "一键扫描清理", ic: "🧹" },
 ] as const;
 

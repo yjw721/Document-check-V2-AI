@@ -5,6 +5,7 @@ import RulesOverviewTab from "./unified/RulesOverviewTab";
 import WordbanksOverviewTab from "./unified/WordbanksOverviewTab";
 import TemplateImportTab from "./unified/TemplateImportTab";
 import AiCreateTab from "./unified/AiCreateTab";
+import DraftsTab from "./unified/DraftsTab";
 import ScanTab from "./unified/ScanTab";
 import { navGuard, LEAVE_CONFIRM_MSG } from "../lib/unsaved";
 
@@ -25,6 +26,7 @@ export default function UnifiedPage({ tab, onTab }: { tab: string; onTab: (k: st
         {tab === "wordbanks" && <WordbanksOverviewTab />}
         {tab === "template" && <TemplateImportTab />}
         {tab === "aiCreate" && <AiCreateTab />}
+        {tab === "drafts" && <DraftsTab />}
         {tab === "scan" && <ScanTab />}
       </div>
     </div>
