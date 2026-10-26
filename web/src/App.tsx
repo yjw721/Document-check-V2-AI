@@ -12,7 +12,7 @@ import { ToastProvider } from "./components/ui/Toast";
 import { OverlayProvider } from "./lib/ui";
 import { TaskProvider } from "./lib/taskState";
 import { DET_TABS, NAV, UNI_TABS } from "./lib/constants";
-import { api, clearAccessToken } from "./lib/api";
+import { api, clearAccessToken, clearAdminToken, setAdminToken } from "./lib/api";
 import { AccessGate } from "./components/ui/AccessGate";
 import { navGuard, LEAVE_CONFIRM_MSG } from "./lib/unsaved";
 import { applyTheme } from "./lib/theme";
@@ -67,7 +67,8 @@ function App() {
     localStorage.getItem("docchk_theme") === "light" ? "light" : "dark",
   );
   const [counts, setCounts] = useState<{ files: number; issues: number }>({ files: 0, issues: 0 });
-  const [role, setRole] = useState<"admin" | "user">("admin");
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [adminRequired, setAdminRequired] = useState(false);
   const [auth, setAuth] = useState<"checking" | "locked" | "open">("checking");
 
   /* 访问口令门禁：启动探针 + 全局 401 兜底 */
@@ -78,6 +79,8 @@ function App() {
       .then((r) => {
         if (!alive) return;
         setAuth(!r.auth_required || r.authorized ? "open" : "locked");
+        setAdminRequired(r.admin_required);
+        setIsAdmin(!r.admin_required || r.admin_authorized);
       })
       .catch(() => alive && setAuth("locked"));
     return () => {
@@ -90,13 +93,49 @@ function App() {
       clearAccessToken();
       setAuth("locked");
     };
+    const onAdminUnauthorized = () => {
+      clearAdminToken();
+      setAdminRequired(true);
+      setIsAdmin(false);
+    };
     window.addEventListener("docchk:unauthorized", onUnauthorized);
-    return () => window.removeEventListener("docchk:unauthorized", onUnauthorized);
+    window.addEventListener("docchk:admin-unauthorized", onAdminUnauthorized);
+    return () => {
+      window.removeEventListener("docchk:unauthorized", onUnauthorized);
+      window.removeEventListener("docchk:admin-unauthorized", onAdminUnauthorized);
+    };
   }, []);
 
+  /* 管理员登录（提权）：验证口令并设置会话级管理员令牌 */
+  const loginAdmin = useCallback(async (token: string): Promise<boolean> => {
+    setAdminToken(token);
+    try {
+      const r = await api.securityPing();
+      setAdminRequired(r.admin_required);
+      if (r.admin_authorized) {
+        setIsAdmin(true);
+        return true;
+      }
+      clearAdminToken();
+      setIsAdmin(false);
+      return false;
+    } catch {
+      clearAdminToken();
+      setIsAdmin(false);
+      return false;
+    }
+  }, []);
+
+  /* 退出管理员提权（关闭标签页也会自动失效） */
+  const logoutAdmin = useCallback(() => {
+    clearAdminToken();
+    setIsAdmin(!adminRequired);
+  }, [adminRequired]);
+
   const { view, detTab, uniTab } = useMemo(() => parseHash(hash), [hash]);
-  /* 普通用户不可见 / 不可进入「AI 配置」后台模块 */
-  const effView = view === "aiconfig" && role !== "admin" ? "overview" : view;
+  /* 普通用户不可见 / 不可进入「AI 配置 / 设置 / 后台」等模块 */
+  const effView =
+    (view === "aiconfig" || view === "settings" || view === "admin") && !isAdmin ? "overview" : view;
 
   /* 哈希变化监听 */
   useEffect(() => {
@@ -117,7 +156,6 @@ function App() {
       .settings()
       .then((s) => {
         applyTheme(s.ui?.theme_scheme, s.ui?.accent_color);
-        setRole(s.role === "user" ? "user" : "admin");
       })
       .catch(() => applyTheme("holographic", ""));
   }, []);
@@ -187,7 +225,11 @@ function App() {
           issueCount={counts.issues}
           theme={theme}
           onToggleTheme={toggleTheme}
-          hiddenNav={role !== "admin" ? ["aiconfig"] : []}
+          hiddenNav={!isAdmin ? ["aiconfig", "settings", "admin"] : []}
+          isAdmin={isAdmin}
+          adminRequired={adminRequired}
+          onAdminLogin={loginAdmin}
+          onAdminLogout={logoutAdmin}
         >
           {/* 页面级错误边界：单个模块崩溃只降级为错误卡片，不再整站白屏 */}
           <ErrorBoundary label={navItem.name}>

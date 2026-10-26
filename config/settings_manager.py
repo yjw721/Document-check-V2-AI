@@ -152,9 +152,13 @@ DEFAULTS: Dict[str, Any] = {
         "cache_expire_days": 7,
         "run_log": False,
     },
-    "role": "admin",                           # 当前应用角色：admin 管理员（可见 AI 配置等后台模块）/ user 普通用户
+    "role": "operator",                        # 知识库默认角色（admin 管理员 / operator 核验操作员 / viewer 只读访客）。
+                                               #   注意：应用层「管理员身份」不再依赖此全局开关，而是由 security.admin_token
+                                               #   以会话级令牌（X-Admin-Token）方式校验，详见 server/security.py。
     "security": {                              # 访问安全（多用户 / 局域网共享场景）
         "access_token": "",                    # 访问口令：空 = 免密（默认单机模式）；非空 = 局域网用户需输入后才能使用
+        "admin_token": "",                     # 管理员口令：空 = 不启用管理员校验（行为与原来一致，管理员功能全开）；
+                                               #   非空 = 后台写接口（设置保存 / AI 配置 / 知识库权限等）须额外携带正确的 X-Admin-Token 头
         "listen": "127.0.0.1",                 # 监听地址：127.0.0.1 = 仅本机 / 0.0.0.0 = 开放局域网（多用户）
     },
 }
@@ -168,6 +172,7 @@ SECRET_MASK = "********"
 SECRET_FIELDS = (
     ("ai", "api_key"),
     ("security", "access_token"),
+    ("security", "admin_token"),
     ("ocr", "cloud", "api_key"),
     ("ocr", "cloud", "secret_key"),
 )

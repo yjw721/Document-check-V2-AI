@@ -108,6 +108,37 @@ export function clearAccessToken(): void {
   setAccessToken("");
 }
 
+/* ---------- 管理员令牌（会话级，提权用；关闭标签页即失效 = 自然登出） ---------- */
+const ADMIN_TOKEN_KEY = "docchk_admin_token";
+
+function safeSessionGet(k: string): string {
+  try {
+    return sessionStorage.getItem(k) || "";
+  } catch {
+    return "";
+  }
+}
+function safeSessionSet(k: string, v: string): void {
+  try {
+    if (v) sessionStorage.setItem(k, v);
+    else sessionStorage.removeItem(k);
+  } catch {
+    /* 隐私模式：仅本次会话生效 */
+  }
+}
+
+let adminToken = safeSessionGet(ADMIN_TOKEN_KEY);
+export function setAdminToken(t: string): void {
+  adminToken = t;
+  safeSessionSet(ADMIN_TOKEN_KEY, t);
+}
+export function getAdminToken(): string {
+  return adminToken;
+}
+export function clearAdminToken(): void {
+  setAdminToken("");
+}
+
 export interface ApiOptions {
   /** multipart/form-data：body 直接作为 FormData */
   form?: boolean;
@@ -122,6 +153,7 @@ async function request<T>(method: string, path: string, body?: unknown, opts: Ap
   if (opts.cache) init.cache = opts.cache;
   (init.headers as Record<string, string>)["X-Workspace"] = getWorkspace();
   if (accessToken) (init.headers as Record<string, string>)["X-Access-Token"] = accessToken;
+  if (adminToken) (init.headers as Record<string, string>)["X-Admin-Token"] = adminToken;
   if (body !== undefined) {
     // FormData 自动按 multipart 发送（浏览器自动带 boundary，切勿手动设 JSON 头）
     if (opts.form || body instanceof FormData) {
@@ -134,18 +166,28 @@ async function request<T>(method: string, path: string, body?: unknown, opts: Ap
   const r = await fetch(API_BASE + path, init);
   if (opts.blob) {
     if (!r.ok) {
-      if (r.status === 401) window.dispatchEvent(new CustomEvent("docchk:unauthorized"));
       const j = await r.json().catch(() => null);
+      if (r.status === 401) {
+        if (j && (j as { admin_required?: boolean }).admin_required) {
+          window.dispatchEvent(new CustomEvent("docchk:admin-unauthorized"));
+        } else {
+          window.dispatchEvent(new CustomEvent("docchk:unauthorized"));
+        }
+      }
       throw new Error((j as { detail?: string } | null)?.detail || "请求失败");
     }
     return (await r.blob()) as unknown as T;
   }
   const ct = r.headers.get("content-type") || "";
   if (ct.includes("application/json")) {
-    const j = (await r.json()) as T & { detail?: string };
+    const j = (await r.json()) as T & { detail?: string; admin_required?: boolean };
     if (!r.ok) {
       if (r.status === 401 && !path.startsWith("/api/security/ping")) {
-        window.dispatchEvent(new CustomEvent("docchk:unauthorized"));
+        if (j.admin_required) {
+          window.dispatchEvent(new CustomEvent("docchk:admin-unauthorized"));
+        } else {
+          window.dispatchEvent(new CustomEvent("docchk:unauthorized"));
+        }
       }
       throw new Error(j.detail || "请求失败");
     }
@@ -158,7 +200,13 @@ async function request<T>(method: string, path: string, body?: unknown, opts: Ap
 export const api = {
   /* ---------- 访问安全探针（免口令） ---------- */
   securityPing: () =>
-    request<{ ok: boolean; auth_required: boolean; authorized: boolean }>("GET", "/api/security/ping"),
+    request<{
+      ok: boolean;
+      auth_required: boolean;
+      authorized: boolean;
+      admin_required: boolean;
+      admin_authorized: boolean;
+    }>("GET", "/api/security/ping"),
 
   /* ---------- 总览 ---------- */
   overview: () => request<OverviewData>("GET", "/api/overview"),

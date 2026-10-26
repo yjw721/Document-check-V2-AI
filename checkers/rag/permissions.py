@@ -70,12 +70,41 @@ def normalize_role(role: Any) -> str:
 
 
 def current_role() -> str:
-    """读取当前应用角色（与核验系统同源）。"""
+    """读取当前应用角色（与核验系统同源）。
+
+    未配置管理员口令（security.admin_token 为空）时，向后兼容视为管理员（全员可用）；
+    已配置时，回退到 settings.role 作为「非提权用户」的默认知识库角色。
+    注：提权会话（携带正确 X-Admin-Token）的判定在 require() / save_permissions() 内完成。
+    """
     try:
         from config.settings_manager import load_settings
-        return normalize_role((load_settings() or {}).get("role"))
+        data = load_settings() or {}
+        sec = data.get("security") or {}
+        atoken = str(sec.get("admin_token", "") or "") if isinstance(sec, dict) else ""
+        if not atoken:
+            return "admin"
+        return normalize_role(data.get("role"))
     except Exception:  # noqa: BLE001 - 配置不可用时按操作员处理
         return "operator"
+
+
+def _role_from_request(request) -> Optional[str]:
+    """若请求携带正确的 X-Admin-Token 则返回 'admin'，否则返回 None（交由 current_role 兜底）。"""
+    if request is None:
+        return None
+    try:
+        import hmac
+        from config.settings_manager import load_settings
+        sec = load_settings().get("security") or {}
+        atoken = str(sec.get("admin_token", "") or "") if isinstance(sec, dict) else ""
+        if not atoken:
+            return None
+        got = request.headers.get("x-admin-token", "") or ""
+        if bool(got) and hmac.compare_digest(got.encode("utf-8"), atoken.encode("utf-8")):
+            return "admin"
+    except Exception:  # noqa: BLE001
+        return None
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -116,13 +145,28 @@ def can(role: Any, cap: str) -> bool:
 def require(cap: str):
     """生成 FastAPI 依赖项：无权限时抛 403。
 
+    管理员令牌（security.admin_token + 请求头 X-Admin-Token）一旦校验通过即视为管理员，
+    拥有全部能力；否则回退到 settings.role 的常规角色判定（与核验系统同源）。
+
     用法::
 
         @router.post("/api/rag/clear", dependencies=[Depends(require("kb.delete"))])
     """
-    from fastapi import Depends, HTTPException
+    from fastapi import Depends, HTTPException, Request
+    import hmac
 
-    def _guard() -> None:
+    def _guard(request: Request) -> None:
+        # 配置了管理员口令且请求携带正确令牌时，视为管理员（拥有全部能力）
+        try:
+            from config.settings_manager import load_settings
+            sec = load_settings().get("security") or {}
+            atoken = str(sec.get("admin_token", "") or "") if isinstance(sec, dict) else ""
+        except Exception:  # noqa: BLE001
+            atoken = ""
+        if atoken:
+            got = request.headers.get("x-admin-token", "") or ""
+            if bool(got) and hmac.compare_digest(got.encode("utf-8"), atoken.encode("utf-8")):
+                return  # 管理员放行
         role = current_role()
         if not can(role, cap):
             from checkers.rag.permissions import label_of
@@ -144,9 +188,12 @@ def label_of(role: Any) -> str:
 # ---------------------------------------------------------------------------
 # 对外载荷
 # ---------------------------------------------------------------------------
-def permissions_payload() -> Dict[str, Any]:
-    """供前端渲染权限矩阵与当前能力。"""
-    role = current_role()
+def permissions_payload(request=None) -> Dict[str, Any]:
+    """供前端渲染权限矩阵与当前能力。
+
+    ``request`` 可选：携带正确 X-Admin-Token 时按管理员视角返回。
+    """
+    role = _role_from_request(request) or current_role()
     caps = caps_of(role)
     return {
         "ok": True,
@@ -161,13 +208,14 @@ def permissions_payload() -> Dict[str, Any]:
     }
 
 
-def save_permissions(patch: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def save_permissions(patch: Optional[Dict[str, Any]] = None, request=None) -> Dict[str, Any]:
     """管理员自定义角色能力矩阵。
 
     ``patch`` 形如 ``{"operator": ["kb.view", "kb.search", "kb.upload"]}``；
     传入 ``{"reset": true}`` 恢复默认矩阵。
+    提权会话（携带正确 X-Admin-Token）始终允许；否则需当前角色为管理员。
     """
-    if current_role() != "admin":
+    if _role_from_request(request) != "admin" and current_role() != "admin":
         return {"ok": False, "message": "仅管理员可修改权限配置"}
 
     from checkers.rag.engine import load_kb, save_kb

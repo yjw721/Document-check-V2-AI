@@ -32,7 +32,7 @@ import type {
  * - 可插拔向量库：默认 Chroma 本地持久化，缺依赖时自动降级为内存后端
  * - 多格式解析：PDF（含扫描件 OCR）/ Word / Excel / 纯文本 / 图片 OCR
  * - 混合检索：BM25 + 向量双路 RRF 融合；问答强制标注来源并做防幻觉审计
- * - 权限：与核验系统 settings.role 打通，服务端强制校验 */
+ * - 权限：与核验系统角色体系打通（settings.role 默认角色 + X-Admin-Token 提权），服务端强制校验 */
 
 const ACCEPT =
   ".docx,.doc,.pdf,.txt,.md,.csv,.xlsx,.png,.jpg,.jpeg,.bmp,.tif,.tiff,.webp";

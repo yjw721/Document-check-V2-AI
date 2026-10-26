@@ -6,7 +6,7 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, File, Form, UploadFile, HTTPException
+from fastapi import APIRouter, File, Form, UploadFile, HTTPException, Request
 from fastapi.responses import FileResponse
 from config.settings_manager import load_settings
 from schemas.api_models import (
@@ -323,16 +323,16 @@ def api_rag_docs_move(payload: Dict[str, Any]):
 # 权限
 # ---------------------------------------------------------------------------
 @router.get("/api/rag/permissions")
-def api_rag_permissions_get():
+def api_rag_permissions_get(request: Request):
     """当前角色及其能力矩阵。"""
-    return rag_permissions()
+    return rag_permissions(request)
 
 
 @router.post("/api/rag/permissions",
              dependencies=[_require_cap("kb.manage")])
-def api_rag_permissions_post(payload: Dict[str, Any]):
+def api_rag_permissions_post(payload: Dict[str, Any], request: Request):
     """自定义角色能力矩阵；``{"reset": true}`` 恢复默认。"""
-    res = rag_save_permissions(payload or {})
+    res = rag_save_permissions(payload or {}, request)
     if not res.get("ok"):
         raise HTTPException(403, res.get("message") or "保存失败")
     return res

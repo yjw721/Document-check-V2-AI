@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
 import Sidebar from "./Sidebar";
+import RoleSwitch from "../ui/RoleSwitch";
 
-/* 应用布局：侧边栏 + 顶栏（标题/面包屑/状态 chips/主题切换）+ 内容区 */
+/* 应用布局：侧边栏 + 顶栏（标题/面包屑/状态 chips/角色切换/主题切换）+ 内容区 */
 interface AppLayoutProps {
   collapsed: boolean;
   onToggle: () => void;
@@ -14,6 +15,10 @@ interface AppLayoutProps {
   theme: "dark" | "light";
   onToggleTheme: () => void;
   hiddenNav?: string[];
+  isAdmin: boolean;
+  adminRequired: boolean;
+  onAdminLogin: (token: string) => Promise<boolean>;
+  onAdminLogout: () => void;
   children: ReactNode;
 }
 
@@ -29,6 +34,10 @@ export default function AppLayout({
   theme,
   onToggleTheme,
   hiddenNav,
+  isAdmin,
+  adminRequired,
+  onAdminLogin,
+  onAdminLogout,
   children,
 }: AppLayoutProps) {
   return (
@@ -41,6 +50,12 @@ export default function AppLayout({
             <div className="truncate text-[13px] text-white/40">{crumb}</div>
           </div>
           <div className="ml-auto flex items-center gap-2.5">
+            <RoleSwitch
+              isAdmin={isAdmin}
+              adminRequired={adminRequired}
+              onLogin={onAdminLogin}
+              onLogout={onAdminLogout}
+            />
             <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3.5 py-1.5 text-xs text-white/60 backdrop-blur-xl">
               <span className="h-2 w-2 rounded-full bg-[#46d39a] shadow-[0_0_8px_#46d39a]" />
               离线运行

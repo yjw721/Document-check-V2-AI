@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from "react";
 import HoloCard from "../components/ui/HoloCard";
 import HoloButton from "../components/ui/HoloButton";
 import HoloModal from "../components/ui/HoloModal";
-import HoloSwitch from "../components/ui/HoloSwitch";
 import { HoloSelect } from "../components/ui/HoloInput";
 import StatCard from "../components/common/StatCard";
 import SectionTitle from "../components/common/SectionTitle";
@@ -70,37 +69,27 @@ export default function SettingsPage() {
   const statusMap: Record<string, string> = {};
   (data?.status ?? []).forEach(([k, v]) => (statusMap[k] = v));
 
-  /* 当前应用角色（管理员 / 普通用户）：控制后台模块可见性 */
-  const [role, setRoleState] = useState<"admin" | "user">("admin");
-  const [sec, setSec] = useState<{ access_token: string; listen: string }>({
+  const [sec, setSec] = useState<{ access_token: string; admin_token: string; listen: string }>({
     access_token: "",
+    admin_token: "",
     listen: "127.0.0.1",
   });
   const [secBusy, setSecBusy] = useState(false);
   const [showToken, setShowToken] = useState(false);
+  const [showAdminToken, setShowAdminToken] = useState(false);
   useEffect(() => {
     api
       .settings()
       .then((st) => {
-        setRoleState(st.role === "user" ? "user" : "admin");
-        const sc = (st as { security?: { access_token?: string; listen?: string } }).security || {};
+        const sc = (st as { security?: { access_token?: string; admin_token?: string; listen?: string } }).security || {};
         setSec({
           access_token: typeof sc.access_token === "string" ? sc.access_token : "",
+          admin_token: typeof sc.admin_token === "string" ? sc.admin_token : "",
           listen: typeof sc.listen === "string" && sc.listen ? sc.listen : "127.0.0.1",
         });
       })
       .catch(() => {});
   }, []);
-  const setRole = async (r: "admin" | "user") => {
-    setRoleState(r);
-    try {
-      const cur = await api.settings();
-      await api.saveSettings({ ...cur, role: r });
-      toast(r === "user" ? "已切换为普通用户：AI 配置等后台模块已隐藏" : "已切换为管理员：后台模块可见");
-    } catch (e) {
-      toast((e as Error).message, "err");
-    }
-  };
   const saveSecurity = async () => {
     setSecBusy(true);
     try {
@@ -181,31 +170,6 @@ export default function SettingsPage() {
         </HoloCard>
       </div>
 
-      {/* 角色与权限 */}
-      <HoloCard className="p-6">
-        <div className="flex flex-wrap items-center gap-3">
-          <SectionTitle className="!mb-0">角色与权限</SectionTitle>
-          <span className="text-xs text-white/45">本地离线工具：角色仅用于区分后台管理可见性，不做账号校验</span>
-        </div>
-        <div className="mt-3 rounded-2xl border border-white/10 bg-white/[0.04] p-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="min-w-0">
-              <div className="text-sm font-semibold text-white/90">
-                当前角色：{role === "admin" ? "管理员" : "普通用户"}
-              </div>
-              <div className="mt-0.5 text-xs text-white/50">
-                管理员可见「AI 配置」等后台模块并可修改；切换为普通用户后这些入口自动隐藏且直链不可进入。
-              </div>
-            </div>
-            <HoloSwitch
-              checked={role === "admin"}
-              onChange={(v) => setRole(v ? "admin" : "user")}
-              label={role === "admin" ? "管理员" : "普通用户"}
-            />
-          </div>
-        </div>
-      </HoloCard>
-
       {/* 访问安全（多用户 / 局域网共享） */}
       <HoloCard className="p-6">
         <div className="flex flex-wrap items-center gap-3">
@@ -245,10 +209,34 @@ export default function SettingsPage() {
               <option value="0.0.0.0" className="bg-[#161a2b]">局域网多用户（0.0.0.0）</option>
             </HoloSelect>
           </div>
+          <div>
+            <div className="mb-1.5 text-xs text-white/60">管理员口令（可选 · 后台写保护）</div>
+            <div className="relative">
+              <input
+                type={showAdminToken ? "text" : "password"}
+                value={sec.admin_token}
+                onChange={(e) => setSec({ ...sec, admin_token: e.target.value })}
+                placeholder="留空表示不启用管理员校验"
+                className="w-full rounded-2xl border border-white/10 bg-white/5 px-3 py-2.5 pr-14 text-sm text-white placeholder:text-white/55 backdrop-blur-xl transition-all outline-none hover:border-white/20 focus:border-[var(--border-accent)] focus:shadow-[0_0_20px_var(--glow-input)] focus:bg-white/[0.08]"
+              />
+              <button
+                type="button"
+                onClick={() => setShowAdminToken((v) => !v)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg px-2 py-1 text-xs text-white/50 hover:bg-white/10 hover:text-white/80"
+              >
+                {showAdminToken ? "隐藏" : "显示"}
+              </button>
+            </div>
+            <div className="mt-1 text-[11px] text-white/35">
+              已设置时仅显示 ********；填新口令即覆盖，清空保存可取消管理员校验。
+            </div>
+          </div>
         </div>
         <div className="mt-3 rounded-2xl border border-white/10 bg-white/[0.04] p-4 text-xs leading-relaxed text-white/50">
-          设置口令后，<b className="text-white/75">本机与局域网任何用户打开页面都需输入口令</b>才能使用（防他人读取/删除检测数据）。
-          开放《0.0.0.0 监听》后重启服务即生效，程序会自动放行 Windows 防火墙入站 TCP 8501（Linux/防火墙受阻时需管理员手动放行）。
+          设置<b className="text-white/75">访问口令</b>后，<b className="text-white/75">本机与局域网任何用户打开页面都需输入口令</b>才能使用（防他人读取/删除检测数据）。
+          设置<b className="text-white/75">管理员口令</b>后，后台写接口（设置保存 / AI 配置 / 知识库权限等）须额外在请求头携带正确令牌，
+          普通用户仅可只读与使用；提权登录在页面右上角「管理员登录」完成，关闭标签页即自动登出。
+          开放《0.0.0.0 监听》后重启服务即生效，程序会自动放行 Windows 防火墙入站 TCP 8501（Linux/防火墙受阻时需手动放行）。
           局域网访问地址：<code className="rounded bg-white/10 px-1.5 py-0.5 text-[var(--tone-primary)]">http://&lt;本机局域网IP&gt;:8501</code>
         </div>
         <div className="mt-4 flex justify-end">
