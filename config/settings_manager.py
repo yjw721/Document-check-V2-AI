@@ -90,6 +90,16 @@ DEFAULTS: Dict[str, Any] = {
         "enable_legacy": False,
         "scan_pdf_skip": "auto",
     },
+    "ocr": {
+        "enabled": False,                      # 核验链路是否对扫描件 PDF 启用 OCR 兜底（默认关闭，保持离线保守）
+        "engine": "tesseract",                # 首选 OCR 引擎：tesseract（本地）/ rapidocr / paddleocr / auto / <云 provider>
+        "cloud": {                            # 预留：百度/腾讯等云 OCR（待实现适配层，见 checkers.rag.parsers.ocr.CloudApiOcrEngine）
+            "provider": "",                   # baidu / tencent / ...
+            "endpoint": "",                   # 云 OCR 接口地址
+            "api_key": "",                    # 脱敏
+            "secret_key": "",                 # 脱敏
+        },
+    },
     "ai": {
         "enabled": False,                      # AI 智能核验总开关（默认关闭，保持离线保密默认）
         "mode": "local",                       # local=本地AI（Ollama，零联网） / online=联网AI（OpenAI 兼容）
@@ -154,7 +164,29 @@ DEFAULTS: Dict[str, Any] = {
 # 敏感字段脱敏
 # ---------------------------------------------------------------------------
 SECRET_MASK = "********"
-SECRET_FIELDS = (("ai", "api_key"), ("security", "access_token"))
+# 敏感字段：2 元组 (section, field) 或 3 元组 (section, subkey, field) 支持一层嵌套
+SECRET_FIELDS = (
+    ("ai", "api_key"),
+    ("security", "access_token"),
+    ("ocr", "cloud", "api_key"),
+    ("ocr", "cloud", "secret_key"),
+)
+
+
+def _secret_target(container: Dict[str, Any], entry) -> Optional[Dict[str, Any]]:
+    """根据 SECRET_FIELDS 条目定位到持有敏感字段的叶子字典。"""
+    if len(entry) == 3:
+        sec = container.get(entry[0])
+        if not isinstance(sec, dict):
+            return None
+        sub = sec.get(entry[1])
+        return sub if isinstance(sub, dict) else None
+    sec = container.get(entry[0])
+    return sec if isinstance(sec, dict) else None
+
+
+def _secret_leaf_field(entry) -> str:
+    return entry[2] if len(entry) == 3 else entry[1]
 
 
 def mask_secrets(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -164,10 +196,11 @@ def mask_secrets(data: Dict[str, Any]) -> Dict[str, Any]:
     ``merge_settings_patch`` 会用当前配置中的真实值还原，避免保存时误覆盖。
     """
     out = copy.deepcopy(data if isinstance(data, dict) else {})
-    for section, field in SECRET_FIELDS:
-        sec = out.get(section)
-        if isinstance(sec, dict) and str(sec.get(field) or ""):
-            sec[field] = SECRET_MASK
+    for entry in SECRET_FIELDS:
+        leaf = _secret_target(out, entry)
+        field = _secret_leaf_field(entry)
+        if leaf is not None and str(leaf.get(field) or ""):
+            leaf[field] = SECRET_MASK
     return out
 
 
@@ -176,18 +209,30 @@ def merge_settings_patch(current: Dict[str, Any],
     """把设置补丁合并到当前配置，并还原前端回传的敏感字段掩码。"""
     patch = patch if isinstance(patch, dict) else {}
     merged = _deep_merge(current if isinstance(current, dict) else {}, patch)
-    for section, field in SECRET_FIELDS:
-        incoming = patch.get(section)
-        if not isinstance(incoming, dict):
+    for entry in SECRET_FIELDS:
+        field = _secret_leaf_field(entry)
+        # 定位 patch 中对应叶子字典
+        leaf_patch = patch
+        if len(entry) == 3:
+            s0 = leaf_patch.get(entry[0])
+            leaf_patch = s0.get(entry[1]) if isinstance(s0, dict) else None
+        else:
+            leaf_patch = leaf_patch.get(entry[0])
+        if not isinstance(leaf_patch, dict):
             continue
-        if str(incoming.get(field) or "") != SECRET_MASK:
+        if str(leaf_patch.get(field) or "") != SECRET_MASK:
             continue
-        sec = merged.get(section)
-        if not isinstance(sec, dict):
-            sec = {}
-            merged[section] = sec
-        src = current.get(section) if isinstance(current, dict) else None
-        sec[field] = (src or {}).get(field, "") if isinstance(src, dict) else ""
+        leaf_merged = _secret_target(merged, entry)
+        if leaf_merged is None:
+            continue
+        # 从 current 还原真实值
+        src_leaf = current
+        if len(entry) == 3:
+            s0 = src_leaf.get(entry[0]) if isinstance(src_leaf, dict) else None
+            src_leaf = s0.get(entry[1]) if isinstance(s0, dict) else None
+        else:
+            src_leaf = src_leaf.get(entry[0]) if isinstance(src_leaf, dict) else None
+        leaf_merged[field] = (src_leaf or {}).get(field, "") if isinstance(src_leaf, dict) else ""
     return merged
 
 

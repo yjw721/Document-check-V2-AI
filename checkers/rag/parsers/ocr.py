@@ -118,14 +118,17 @@ class PaddleOcrEngine(OcrEngine):
 
 
 class TesseractEngine(OcrEngine):
-    """Tesseract —— 需本机安装并带 chi_sim 语言包。"""
+    """Tesseract —— 需本机安装并带 chi_sim 语言包。
+
+    作为本地离线首选引擎（用户设定默认 ``tesseract``）；
+    未安装时由 ``get_engine`` 自动回退到 RapidOCR / PaddleOCR。
+    """
 
     name = "tesseract"
 
     def available(self) -> bool:
         try:
             import pytesseract  # type: ignore
-            from PIL import Image  # type: ignore
             pytesseract.get_tesseract_version()
             return True
         except Exception:  # noqa: BLE001
@@ -140,6 +143,59 @@ class TesseractEngine(OcrEngine):
             from PIL import Image  # type: ignore
             img = Image.open(io.BytesIO(image_bytes))
             return str(pytesseract.image_to_string(img, lang="chi_sim+eng") or "").strip()
+        except Exception:  # noqa: BLE001
+            return ""
+
+
+class CloudApiOcrEngine(OcrEngine):
+    """云 OCR 引擎预留接口（百度 / 腾讯 等）。
+
+    设计目标：在不引入具体云厂商 SDK 的前提下，先定义好「配置驱动的云 OCR」
+    接入骨架，后续只需在 ``_CLOUD_PROVIDERS`` 注册对应 provider 的适配函数即可。
+
+    可用性规则（避免被误选为默认引擎）：
+    - 必须在 settings.ocr.cloud 中配置 ``provider`` / ``endpoint`` / ``api_key``；
+    - 且 ``provider`` 必须已在 ``_IMPLEMENTED_PROVIDERS`` 中登记（当前为空）。
+    未实现时 ``available()`` 恒为 False，OCR 自动回退到本地引擎。
+    """
+
+    name = "cloud"
+
+    #: 已实现的云 provider 适配函数：provider -> (image_bytes, cfg) -> str
+    #: 接入百度/腾讯时，在此注册具体实现，并加入 ``_IMPLEMENTED_PROVIDERS``。
+    _CLOUD_PROVIDERS: Dict[str, Any] = {}
+    _IMPLEMENTED_PROVIDERS = frozenset()
+
+    def _cfg(self) -> Dict[str, Any]:
+        try:
+            from config.settings_manager import load_settings
+            return (load_settings().get("ocr", {}) or {}).get("cloud", {}) or {}
+        except Exception:  # noqa: BLE001
+            return {}
+
+    def available(self) -> bool:
+        cfg = self._cfg()
+        provider = str(cfg.get("provider") or "").strip().lower()
+        if not provider:
+            return False
+        if provider not in self._IMPLEMENTED_PROVIDERS:
+            return False
+        return bool(cfg.get("endpoint")) and bool(cfg.get("api_key"))
+
+    def image_to_text(self, image_bytes: bytes) -> str:
+        if not image_bytes:
+            return ""
+        cfg = self._cfg()
+        provider = str(cfg.get("provider") or "").strip().lower()
+        adapter = self._CLOUD_PROVIDERS.get(provider)
+        if adapter is None:
+            # 预留接口尚未实现：明确失败而非静默返回空，便于排查。
+            raise NotImplementedError(
+                f"云 OCR provider「{provider or '未配置'}」的适配层尚未实现；"
+                "请在 ocr.CloudApiOcrEngine._CLOUD_PROVIDERS 注册对应实现。"
+            )
+        try:
+            return str(adapter(image_bytes, cfg) or "").strip()
         except Exception:  # noqa: BLE001
             return ""
 
@@ -174,23 +230,26 @@ def _collect(result: Any) -> List[str]:
     return [r[2] for r in rows]
 
 
-#: 自动探测顺序
-_CANDIDATES = (RapidOcrEngine, PaddleOcrEngine, TesseractEngine)
+#: 自动探测顺序（质量优先；Tesseract 为本地离线首选，但排在其余之后以优先用更优模型）
+_CANDIDATES = (RapidOcrEngine, PaddleOcrEngine, TesseractEngine, CloudApiOcrEngine)
 
 
 def get_engine(preferred: str = "auto") -> Optional[OcrEngine]:
     """返回可用 OCR 引擎；无可用引擎时返回 None。
 
     ``preferred`` 为 ``auto`` 时按 ``_CANDIDATES`` 顺序探测；
-    指定引擎名时优先尝试，失败再回退自动探测。
+    指定引擎名时优先尝试，但该引擎不可用时**自动回退**到其余候选引擎
+    （例如首选 ``tesseract`` 但未安装，则回退到 RapidOCR），而非直接禁用 OCR。
     """
     want = str(preferred or "auto").strip().lower()
+    if want in ("auto", "", "none", "off", "false"):
+        want = None
     with _LOCK:
-        if _ENGINE_CACHE.get("engine") is not None and _ENGINE_CACHE.get("name") == want:
+        if _ENGINE_CACHE.get("engine") is not None and _ENGINE_CACHE.get("name") == (want or "auto"):
             return _ENGINE_CACHE["engine"]
         engine: Optional[OcrEngine] = None
         err = ""
-        if want not in ("auto", "", "none", "off", "false"):
+        if want:
             for cls in _CANDIDATES:
                 if cls.name == want:
                     try:
@@ -198,11 +257,11 @@ def get_engine(preferred: str = "auto") -> Optional[OcrEngine]:
                         if inst.available():
                             engine = inst
                         else:
-                            err = f"{want} 不可用"
+                            err = f"{want} 不可用，已回退到其它可用引擎"
                     except Exception as exc:  # noqa: BLE001
                         err = str(exc)
                     break
-        if engine is None and not err:
+        if engine is None:
             for cls in _CANDIDATES:
                 try:
                     inst = cls()
@@ -212,24 +271,39 @@ def get_engine(preferred: str = "auto") -> Optional[OcrEngine]:
                 except Exception:  # noqa: BLE001
                     continue
         if engine is None and not err:
-            err = "未检测到可用 OCR 引擎（建议安装 rapidocr_onnxruntime）"
-        _ENGINE_CACHE.update(name=want, engine=engine, error=err)
+            err = "未检测到可用 OCR 引擎（建议安装 rapidocr-onnxruntime 或配置本地 tesseract）"
+        _ENGINE_CACHE.update(name=want or "auto", engine=engine, error=err)
         return engine
 
 
 def ocr_status(preferred: str = "auto") -> Dict[str, Any]:
     """供前端展示的 OCR 可用性诊断。"""
     eng = get_engine(preferred)
+    cloud_cfg = {}
+    try:
+        from config.settings_manager import load_settings
+        cloud_cfg = (load_settings().get("ocr", {}) or {}).get("cloud", {}) or {}
+    except Exception:  # noqa: BLE001
+        pass
+    cloud_provider = str(cloud_cfg.get("provider") or "").strip()
     return {
         "available": eng is not None,
         "engine": eng.name if eng else "",
+        "preferred": preferred or "auto",
         "error": "" if eng else str(_ENGINE_CACHE.get("error") or ""),
         "engines": [{"id": c.name, "installed": _installed(c)} for c in _CANDIDATES],
+        "cloud": {
+            "configured": bool(cloud_provider),
+            "provider": cloud_provider,
+            "implemented": cloud_provider in CloudApiOcrEngine._IMPLEMENTED_PROVIDERS,
+        },
     }
 
 
 def _installed(cls) -> bool:
     import importlib.util as u
+    if cls is CloudApiOcrEngine:
+        return bool(cls().available())
     return u.find_spec("rapidocr_onnxruntime" if cls is RapidOcrEngine
                        else "paddleocr" if cls is PaddleOcrEngine
                        else "pytesseract") is not None

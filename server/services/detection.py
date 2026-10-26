@@ -142,6 +142,7 @@ def run_detection(items: List[tuple], append: bool = False, tid: str = "", wsid:
     settings = load_settings()
     det = settings.get("detection", {})
     parse_set = settings.get("parse", {})
+    ocr_set = settings.get("ocr", {})
     ai_cfg = dict(settings.get("ai", {}) or {})
     if ai_over:
         for k in ("enabled", "verify_scope"):
@@ -156,6 +157,9 @@ def run_detection(items: List[tuple], append: bool = False, tid: str = "", wsid:
         "parse_timeout": parse_timeout,
         "auto_ignore_blank": auto_ignore_blank,
         "fluency_sensitivity": str(det.get("fluency_sensitivity", "normal") or "normal"),
+        "enable_ocr": bool(ocr_set.get("enabled", False)),
+        "ocr_engine": str(ocr_set.get("engine", "tesseract") or "tesseract"),
+        "scan_pdf_skip": str(parse_set.get("scan_pdf_skip", "auto") or "auto"),
     }
     config = load_rules()
     ai_enabled = bool(ai_cfg.get("enabled", False))

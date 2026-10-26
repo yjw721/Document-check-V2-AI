@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import os
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from checkers.base import (
     STATUS_UNREADABLE,
@@ -68,12 +68,16 @@ def _unsupported_result(path: str, name: str, reason: str) -> FileResult:
 
 def _dispatch(path: str, config: RuleConfig, name: str, ftype: str,
               fluency_sensitivity: str = "normal",
-              progress: Optional[ProgressHook] = None) -> FileResult:
+              progress: Optional[ProgressHook] = None,
+              ocr_enabled: bool = True, ocr_engine: str = "auto",
+              scan_pdf_skip: str = "auto") -> FileResult:
     """按文件类型分发到具体引擎（在线程内执行）。"""
     if ftype == "Word":
         return check_word(path, config, name, fluency_sensitivity, progress=progress)
     if ftype == "PDF":
-        return check_pdf(path, config, name, fluency_sensitivity, progress=progress)
+        return check_pdf(path, config, name, fluency_sensitivity, progress=progress,
+                         ocr_enabled=ocr_enabled, ocr_engine=ocr_engine,
+                         scan_pdf_skip=scan_pdf_skip)
     return check_excel(path, config, name, fluency_sensitivity, progress=progress)
 
 
@@ -111,6 +115,9 @@ def check_single(path: str, config: RuleConfig, display_name: Optional[str] = No
         parse_timeout     单文件解析超时秒数（0 = 不限制）
         auto_ignore_blank 是否自动忽略空白文件（由调用方在 run_detection 中过滤）
         fluency_sensitivity 语句通顺检测灵敏度（loose/normal/strict）
+        enable_ocr        [可选，默认关闭] 对无文本层的扫描图片型 PDF 启用 OCR 兜底
+        ocr_engine        [可选] 首选 OCR 引擎：tesseract / rapidocr / paddleocr / auto
+        scan_pdf_skip     [可选] 扫描型 PDF 跳过策略：auto / always / never
     """
     name = display_name or os.path.basename(path)
     o = opts or {}
@@ -118,6 +125,9 @@ def check_single(path: str, config: RuleConfig, display_name: Optional[str] = No
     enable_legacy = bool(o.get("enable_legacy", False))
     parse_timeout = o.get("parse_timeout", 0) or 0
     fluency_sensitivity = o.get("fluency_sensitivity", "normal") or "normal"
+    enable_ocr = bool(o.get("enable_ocr", False))
+    ocr_engine = o.get("ocr_engine", "auto") or "auto"
+    scan_pdf_skip = o.get("scan_pdf_skip", "auto") or "auto"
 
     ext = os.path.splitext(name)[1].lower()
     ftype = detect_file_type(name)
@@ -163,10 +173,12 @@ def check_single(path: str, config: RuleConfig, display_name: Optional[str] = No
 
     try:
         if parse_timeout > 0:
-            result = _run_with_timeout(_dispatch, (path, config, name, ftype, fluency_sensitivity, progress),
+            result = _run_with_timeout(_dispatch, (path, config, name, ftype, fluency_sensitivity,
+                                                  progress, enable_ocr, ocr_engine, scan_pdf_skip),
                                        parse_timeout)
         else:
-            result = _dispatch(path, config, name, ftype, fluency_sensitivity, progress)
+            result = _dispatch(path, config, name, ftype, fluency_sensitivity, progress,
+                               enable_ocr, ocr_engine, scan_pdf_skip)
     except concurrent.futures.TimeoutError:
         try:
             size = os.path.getsize(path)

@@ -11,6 +11,7 @@ from server.routes import (
     ai_memory,
     detection,
     dicts,
+    ocr,
     overview,
     rag,
     report,
@@ -34,6 +35,7 @@ ROUTERS = [
     ai_build.router,     # AI 规则词库智能生成
     ai_memory.router,    # 本地 AI 自学习
     rag.router,          # 本地知识库问答
+    ocr.router,          # OCR 状态（核验侧）
     report.router,       # 报告导出
 ]
 

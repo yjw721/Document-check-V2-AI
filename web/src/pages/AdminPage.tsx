@@ -135,6 +135,15 @@ export default function AdminPage() {
         ],
       },
       {
+        key: "ocr",
+        label: "OCR（扫描件识别）",
+        ic: "🖼️",
+        fields: [
+          ["enabled", "对扫描件 PDF 启用 OCR 兜底"],
+          ["engine", "首选 OCR 引擎"],
+        ],
+      },
+      {
         key: "log_cache",
         label: "缓存与日志",
         ic: "🗂️",
@@ -167,6 +176,16 @@ export default function AdminPage() {
           ["auto", "自动"],
           ["always", "总是跳过"],
           ["never", "从不跳过"],
+        ],
+      };
+    if (key === "engine")
+      return {
+        type: "select",
+        options: [
+          ["tesseract", "本地 Tesseract"],
+          ["rapidocr", "RapidOCR"],
+          ["paddleocr", "PaddleOCR"],
+          ["auto", "自动(回退)"],
         ],
       };
     return { type: "text" };

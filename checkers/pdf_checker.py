@@ -19,7 +19,7 @@ PDF (.pdf) 低级错误检测引擎
 from __future__ import annotations
 
 import os
-from typing import Any, Callable, List, Optional
+from typing import Callable, List, Optional
 
 from checkers.base import (
     STATUS_ISSUE,
@@ -42,13 +42,20 @@ class PdfChecker:
     """PDF 检测器。一个实例对应一次文件检测。"""
 
     def __init__(self, config: RuleConfig, fluency_sensitivity: str = "normal",
-                 progress: Optional[Callable[[float, str, str], bool]] = None) -> None:
+                 progress: Optional[Callable[[float, str, str], bool]] = None,
+                 ocr_enabled: bool = False, ocr_engine: str = "auto",
+                 scan_pdf_skip: str = "auto") -> None:
         self.cfg = config
         self.kind = "pdf"
         self.issues: List[Issue] = []
         self._limit = config.max_issues_per_file()
         self._fluency_sensitivity = fluency_sensitivity
         self._progress = progress
+        # OCR 兜底：扫描件 PDF 在原生文本层为空时，是否栅格化后经 OCR 引擎识别。
+        # 默认取决于后台设置（通常关闭，保持离线保守）；无可用引擎时自动跳过。
+        self.ocr_enabled = ocr_enabled
+        self.ocr_engine = ocr_engine
+        self.scan_pdf_skip = scan_pdf_skip
 
     def _hook(self, pct: float, stage: str, log: str) -> bool:
         if not self._progress:
@@ -101,45 +108,34 @@ class PdfChecker:
             result.error_message = "PDF 解析失败：" + clip(str(exc), 120)
             return result
 
-        # 3) 逐页提取文本并检测
-        self.issues = []
-        tn = TextNormChecker(self.cfg, self.issues, self._limit)
-        fl = FluencyChecker(self.cfg, self.issues, self._limit, self._fluency_sensitivity)
-        cust = CustomRuleEngine(self.issues, self._limit)
-        wb = WordBankEngine(self.issues, self._limit)
-
+        # 3) 逐页提取原生文本层
         all_text: List[str] = []
-        stat = {"pages": total}
-
         for idx, page in enumerate(pages, start=1):
-            if not self._hook(8.0 + 82.0 * (idx - 1) / max(total, 1), "format_error",
-                              f"正在检测第 {idx}/{total} 页（格式规范/语句通顺/行业词库）…"):
-                return result
-            if len(self.issues) >= self._limit:
-                break
             try:
                 text = page.extract_text() or ""
             except Exception:  # noqa: BLE001
                 text = ""
-            text = text.strip()
-            all_text.append(text)
-            if not text:
-                continue
-            loc = pdf_location(idx)
-            try:
-                tn.check_text(loc, text)
-                fl.check_text(loc, text)
-                cust.check_text("pdf", loc, text)
-                wb.check_text("pdf", loc, text)
-            except Exception as exc:  # noqa: BLE001
-                self._add_engine_note(f"第 {idx} 页检测异常：{type(exc).__name__}")
+            all_text.append(text.strip())
 
-        # 4) 扫描图片型 PDF 判定（全部页均无文本层）
-        self._hook(95.0, "summary", f"正在汇总「{name}」检测结果…")
+        stat = {"pages": total, "ocr_used": False, "ocr_pages": 0}
+
+        # 4) 扫描图片型 PDF：按需 OCR 兜底（默认关闭，需在设置中启用）
         if not any(t.strip() for t in all_text):
-            result.status = STATUS_UNREADABLE
-            result.error_message = "扫描图片型 PDF（无可提取文本层），本工具不执行 OCR，无法解析"
-            # 仍附带引擎提示，便于用户知晓
+            recovered = self._try_ocr(path, total, stat)
+            if recovered is None:
+                result.status = STATUS_UNREADABLE
+                if self.ocr_enabled and self.scan_pdf_skip != "always":
+                    result.error_message = (
+                        "扫描图片型 PDF（无可提取文本层）；已尝试 OCR 但本机未安装可用 "
+                        "OCR 引擎（建议安装 tesseract+chi_sim 语言包或 rapidocr-onnxruntime），无法解析"
+                    )
+                else:
+                    result.error_message = "扫描图片型 PDF（无可提取文本层），本工具不执行 OCR，无法解析"
+                return result
+            all_text = recovered
+
+        # 5) 规则检测
+        if not self._run_page_checks(all_text, total):
             return result
 
         self._hook(100.0, "summary", f"正在收集「{name}」位置信息：页码…")
@@ -149,9 +145,74 @@ class PdfChecker:
         result.status = STATUS_ISSUE if self.issues else STATUS_PASS
         return result
 
+    def _run_page_checks(self, all_text: List[str], total: int) -> bool:
+        """对每页文本跑规则检测；返回 False 表示任务被取消。"""
+        self.issues = []
+        tn = TextNormChecker(self.cfg, self.issues, self._limit)
+        fl = FluencyChecker(self.cfg, self.issues, self._limit, self._fluency_sensitivity)
+        cust = CustomRuleEngine(self.issues, self._limit)
+        wb = WordBankEngine(self.issues, self._limit)
+
+        for idx, text in enumerate(all_text, start=1):
+            if not self._hook(8.0 + 82.0 * (idx - 1) / max(total, 1), "format_error",
+                              f"正在检测第 {idx}/{total} 页（格式规范/语句通顺/行业词库）…"):
+                return False
+            if len(self.issues) >= self._limit:
+                break
+            if not text.strip():
+                continue
+            loc = pdf_location(idx)
+            try:
+                tn.check_text(loc, text)
+                fl.check_text(loc, text)
+                cust.check_text("pdf", loc, text)
+                wb.check_text("pdf", loc, text)
+            except Exception as exc:  # noqa: BLE001
+                self._add_engine_note(f"第 {idx} 页检测异常：{type(exc).__name__}")
+        return True
+
+    def _try_ocr(self, path: str, total: int, stat: dict) -> Optional[List[str]]:
+        """扫描件 OCR 兜底：栅格化各页后经 OCR 引擎识别。
+
+        返回 OCR 后的每页文本列表；未启用 / 跳过 / 无可用引擎 / 仍无文本时返回 None。
+        """
+        if not self.ocr_enabled or self.scan_pdf_skip == "always":
+            return None
+        try:
+            from checkers.rag.parsers.ocr import get_engine
+            from checkers.rag.parsers.pdf import _rasterize
+        except Exception:  # noqa: BLE001
+            return None
+        engine = get_engine(self.ocr_engine)
+        if engine is None:
+            return None
+        self._hook(15.0, "ocr", f"正在对「{os.path.basename(path)}」扫描页做 OCR 识别…")
+        try:
+            with open(path, "rb") as fh:
+                raw = fh.read()
+        except OSError:
+            return None
+        imgs = _rasterize(raw, list(range(total)))
+        recovered: List[str] = []
+        for img in imgs:
+            try:
+                txt = engine.image_to_text(img) if img else ""
+            except Exception:  # noqa: BLE001 - 单页失败不影响整体
+                txt = ""
+            recovered.append((txt or "").strip())
+        used = sum(1 for t in recovered if t)
+        stat["ocr_used"] = used > 0
+        stat["ocr_pages"] = used
+        if not any(t.strip() for t in recovered):
+            return None
+        return recovered
+
 
 def check_pdf(path: str, config: RuleConfig, display_name: Optional[str] = None,
               fluency_sensitivity: str = "normal",
-              progress: Optional[Callable[[float, str, str], bool]] = None) -> FileResult:
+              progress: Optional[Callable[[float, str, str], bool]] = None,
+              ocr_enabled: bool = False, ocr_engine: str = "auto",
+              scan_pdf_skip: str = "auto") -> FileResult:
     """对外统一函数式入口。"""
-    return PdfChecker(config, fluency_sensitivity, progress).check(path, display_name)
+    return PdfChecker(config, fluency_sensitivity, progress,
+                      ocr_enabled, ocr_engine, scan_pdf_skip).check(path, display_name)
