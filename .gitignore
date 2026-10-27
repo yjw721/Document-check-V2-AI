@@ -8,6 +8,7 @@ venv/
 .workbuddy/
 1/
 reports/
+config/data_store.json
 tests/out/
 tests/_tpl/
 tests/_tmp_e2e/
