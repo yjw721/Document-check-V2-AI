@@ -13,6 +13,14 @@
 4. **上下文前缀（Contextual Retrieval）**：为每块生成 ``文档名 + 章节路径``
    前缀参与向量化，显著提升块在向量空间中的可分性
    （Anthropic 2024 Contextual Retrieval 思路的零调用成本近似）。
+5. **表格感知（v4）**：数值表格是核验类知识库的主力内容，专门处理三件事——
+   a) 重叠只回填**完整行**且**不跨表格行**：旧实现按固定字数从块尾截 100 字，
+      表格行（无句读标点）会被切在数字中间（如 ``3.06`` 截成 ``06 |``），
+      且同一残片在后续每块重复出现，制造近重复噪声块；
+   b) **表格续块自动补表头**：同一表格被块大小切开时，续块首部重复该表的
+      表头行（含合并横幅），片段不再「只有一排裸数字、不知列含义」；
+   c) **过短片段合并**：启用 ``MIN_CHUNK_CHARS``——过短的普通片段并入前块，
+      孤立标题并入后块（标题必须与其内容同块）。
 """
 
 from __future__ import annotations
@@ -30,10 +38,14 @@ MAX_DOC_CHARS = 300_000    # 单文件参与索引的最大文本量
 MAX_CHUNKS_PER_DOC = 600
 
 # 切片结构版本：切片规则变化时递增，触发全量重建
-CHUNK_SCHEMA_VERSION = 3
+CHUNK_SCHEMA_VERSION = 4
 
 _CJK_RUN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]+")
 _LATIN = re.compile(r"[a-z0-9_]+")
+
+# 表格行块定位（parse_docx 的 loc 形如「表 2 第 7 行」）与数据行日期前缀
+_TBL_ROW = re.compile(r"^表\s*(\d+)\s+第\s*(\d+)\s+行$")
+_DATE_PREFIX = re.compile(r"^(?:19|20)\d{2}\s*[/年.\-]")
 
 # 形如日期/金额的行不应被误判为标题
 _NOT_HEADING = re.compile(r"(?:19|20)\d{2}\s*[.\-/年]|\d+\s*[.]\s*\d+\s*[%‰]|^[\d,\s.]+$")
@@ -97,9 +109,32 @@ def is_heading(text: str) -> bool:
 
 
 def _tail_snippet(text: str, n: int) -> str:
-    """取文本尾部 n 个字符，并尽量对齐到句读之后。"""
+    """取文本尾部 n 个字符作为下一块的重叠——行感知、表格安全。
+
+    - 只回填**完整行**：绝不在行中间截断（旧实现按固定字数截尾，表格行无句读
+      标点，会切在数字中间，如 ``2025/07/20 | ... | 3.06`` 截出 ``06 | 3.09 |``，
+      且同一残片在后续每块重复，制造近重复噪声）；
+    - 末行为**表格行**时返回空：数值行的重叠没有语义增益，只有重复噪声；
+    - 末行是超长散文行时退回句读对齐。
+    """
+    lines = [x for x in (text or "").split("\n") if x.strip()]
+    if not lines:
+        return ""
+    if " | " in lines[-1]:
+        return ""                       # 表格结尾：不回填重叠
     if len(text) <= n:
         return text.strip()
+    picked: List[str] = []
+    total = 0
+    for ln in reversed(lines):
+        if " | " in ln:                 # 只回填到最后一个完整散文行为止
+            break
+        if total + len(ln) + 1 > n:
+            break
+        picked.append(ln)
+        total += len(ln) + 1
+    if picked:
+        return "\n".join(reversed(picked)).strip()
     tail = text[-n:]
     for sep in _SENT_END + ("\n", ". ", "; "):
         k = tail.find(sep)
@@ -120,13 +155,55 @@ def _mk_chunk(stack: List[Tuple[int, str]], buf: List[str], loc: str) -> Dict[st
     }
 
 
+def _is_data_row(line: str) -> bool:
+    """表格数据行判定：前两列任一以日期（2025/06/30、2026年1月…）开头。"""
+    cells = [c.strip() for c in line.split(" | ")]
+    return any(_DATE_PREFIX.match(c) for c in cells[:2])
+
+
+def _merge_tiny(chunks: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    """过短片段合并（启用 ``MIN_CHUNK_CHARS``）。
+
+    - 普通过短片段 → 并入**前块**（元数据沿用前块）；
+    - 以标题开头的过短片段（孤立标题）→ 并入**后块**（标题必须与其内容同块）；
+    - 合并只拼接 text，``section / path / loc`` 沿用被并入目标的元数据。
+    """
+    if not chunks:
+        return chunks
+    out: List[Dict[str, str]] = []
+    pending: List[str] = []          # 待并入下一块的孤立标题 / 首部碎片
+    for c in chunks:
+        txt = (c.get("text") or "").strip()
+        if len(txt) < MIN_CHUNK_CHARS:
+            if txt:
+                first = txt.split("\n", 1)[0]
+                if out and match_heading(first)[0] == 0:
+                    out[-1]["text"] = out[-1]["text"] + "\n" + (c.get("text") or "")
+                else:
+                    pending.append(c.get("text") or "")
+            continue
+        if pending:
+            c = dict(c, text="\n".join(pending + [c.get("text") or ""]))
+            pending = []
+        out.append(c)
+    if pending:
+        if out:
+            out[-1] = dict(out[-1], text=out[-1]["text"] + "\n" + "\n".join(pending))
+        else:
+            out = [{"section": "", "path": "", "loc": "", "text": "\n".join(pending)}]
+    return out
+
+
 def chunk_blocks(blocks: List[Tuple[str, str]],
                  size: int = CHUNK_SIZE,
                  overlap: int = CHUNK_OVERLAP) -> List[Dict[str, str]]:
-    """段落级聚合切片。
+    """段落级聚合切片（v4：表格感知）。
 
     - 标题行既是新块的起始，也保留在块内（充当天然标签）；
-    - 块达 ``size`` 时切分，并承接上一块尾部 ``overlap`` 字符；
+    - 块达 ``size`` 时按**行边界**切分，承接上一块尾部 ``overlap`` 字符
+      （重叠只回填完整行，且不跨表格行——见 ``_tail_snippet``）；
+    - 同一表格（loc「表 N 第 R 行」）被切开时，续块首部自动补该表表头行；
+    - 收尾做 ``_merge_tiny``：过短片段并入相邻块，孤立标题并入其内容块；
     - 切片结构版本写入调用方的 doc["sig"]，由 engine 决定是否复用。
     """
     size = max(120, int(size or CHUNK_SIZE))
@@ -139,9 +216,12 @@ def chunk_blocks(blocks: List[Tuple[str, str]],
     loc0 = ""
     total_chars = 0
     pending_overlap = False   # 当前 buf 是否仅有上一块尾部的重叠片段
+    buf_tid = ""              # 当前 buf 中表格行所属的表（「表 3」）；非表格行为 ""
+    tbl_state: Dict[str, Dict[str, object]] = {}   # 表 id → {"hdr": [表头行], "data": bool}
 
     def _flush() -> None:
-        nonlocal buf, buf_len, loc0, pending_overlap
+        nonlocal buf, buf_len, loc0, pending_overlap, buf_tid
+        buf_tid = ""
         if not buf or (pending_overlap and len(buf) == 1):
             buf, buf_len, loc0, pending_overlap = [], 0, "", False
             return
@@ -169,19 +249,41 @@ def chunk_blocks(blocks: List[Tuple[str, str]],
                 stack.append((lvl, label or ln))
             total_chars += len(ln)
             if total_chars > MAX_DOC_CHARS:
-                return chunks
+                return _merge_tiny(chunks)
+            m = _TBL_ROW.match(str(loc or ""))
+            tid = f"表{m.group(1)}" if m else ""
             if buf_len > 0 and buf_len + len(ln) > size:
+                flushed_tid = buf_tid
                 _flush()
+                # 同表续块：把该表表头行补到块首，片段不再是一排裸数字
+                if tid and tid == flushed_tid and not buf:
+                    st = tbl_state.get(tid) or {}
+                    hdr = list(st.get("hdr") or [])
+                    if hdr:
+                        buf = hdr
+                        buf_len = sum(len(h) for h in hdr) + len(hdr) - 1
+                        loc0 = str(loc or "")
+                        pending_overlap = False
             if not loc0:
                 loc0 = str(loc or "")
             buf.append(ln)
             buf_len += len(ln)
+            if tid:
+                buf_tid = tid
+                st = tbl_state.setdefault(tid, {"hdr": [], "data": False})
+                if not st["data"]:
+                    if _is_data_row(ln):
+                        st["data"] = True
+                    elif len(st["hdr"]) < 4:      # 上限防膨胀（横幅 + 列头即可）
+                        st["hdr"].append(ln)
+            else:
+                buf_tid = ""
             if len(chunks) >= MAX_CHUNKS_PER_DOC:
-                return chunks
+                return _merge_tiny(chunks)
 
     if buf and not (pending_overlap and len(buf) == 1):
         chunks.append(_mk_chunk(stack, buf, loc0))
-    return chunks
+    return _merge_tiny(chunks)
 
 
 def context_prefix(doc_name: str, section_path: str,

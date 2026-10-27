@@ -49,20 +49,40 @@ def parse_csv(name: str, raw: bytes) -> List[Block]:
 
 
 def parse_docx(name: str, raw: bytes) -> List[Block]:
-    """.docx 解析：段落 + 表格行。"""
+    """.docx 解析：按文档流顺序混合段落与表格行。
+
+    旧实现先遍历 ``doc.paragraphs``、再遍历 ``doc.tables``，于是所有表格被
+    整体挪到文末，脱离其所属标题与引导句——章节路径 / 上下文前缀随之错位
+    （如 LPR 表格被挂在「三、定期存款」标题下，按标题检索全部失准）。
+    这里改为按 ``w:body`` 的真实子元素顺序遍历，段落与表格交错输出；
+    同时对横向合并单元格（``row.cells`` 展开为相邻重复值）做相邻去重。
+    """
     from docx import Document  # type: ignore
+    from docx.oxml.ns import qn  # type: ignore
+    from docx.table import Table  # type: ignore
+    from docx.text.paragraph import Paragraph  # type: ignore
 
     doc = Document(io.BytesIO(raw))
-    blocks: List[Block] = [
-        (f"第 {i} 段", p.text.strip())
-        for i, p in enumerate(doc.paragraphs, 1)
-        if p.text and p.text.strip()
-    ]
-    for ti, table in enumerate(doc.tables, 1):
-        for ri, row in enumerate(table.rows, 1):
-            cells = [c.text.strip() for c in row.cells if c.text.strip()]
-            if len(cells) >= 1:
-                blocks.append((f"表 {ti} 第 {ri} 行", " | ".join(cells)))
+    blocks: List[Block] = []
+    pi = ti = 0
+    for child in doc.element.body.iterchildren():
+        if child.tag == qn("w:p"):
+            pi += 1
+            t = Paragraph(child, doc).text.strip()
+            if t:
+                blocks.append((f"第 {pi} 段", t))
+        elif child.tag == qn("w:tbl"):
+            ti += 1
+            table = Table(child, doc)
+            for ri, row in enumerate(table.rows, 1):
+                cells: List[str] = []
+                for c in row.cells:
+                    v = c.text.strip()
+                    # 横向合并的单元格在 row.cells 中被展开为重复值 → 相邻去重
+                    if v and (not cells or v != cells[-1]):
+                        cells.append(v)
+                if cells:
+                    blocks.append((f"表 {ti} 第 {ri} 行", " | ".join(cells)))
     return blocks
 
 
