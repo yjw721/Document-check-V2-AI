@@ -9,8 +9,9 @@
   管理员校验（可选增强）：
   config/settings.json -> security.admin_token：
       空字符串 = 不启用管理员口令（默认；所有用户拥有完整后台写权限，向后兼容）
-      非空     = 后台写接口（设置保存 / AI 配置 / 知识库权限等）须额外携带正确的
-                 X-Admin-Token 头，否则返回 401。普通用户仍可只读 / 使用应用。
+      非空     = 后台「配置/维护类」写接口（设置保存 / AI 配置 / 知识库权限等）须额外携带正确的
+                 X-Admin-Token 头，否则返回 401。普通用户仍可只读 / 使用应用（含 AI 生成、
+                 草稿采纳与丢弃等操作员生产动作，由各自路由的能力依赖把关，不在此限）。
 """
 from __future__ import annotations
 
@@ -26,9 +27,21 @@ router = APIRouter()
 
 # 需要管理员令牌才能写入的后台路径前缀（普通用户只读 / 使用，无写权限）
 ADMIN_WRITE_PREFIXES = (
-    "/api/settings",          # 设置保存 / 读取
-    "/api/ai/",               # AI 配置读写
+    "/api/settings",          # 设置保存
     "/api/rag/permissions",   # 知识库权限
+)
+
+# AI 域「配置/维护类」写接口 —— 才需要管理员口令。
+# 注意：生成（/api/ai/build/*）与草稿采纳/丢弃（/api/ai/drafts/*）属于操作员的「使用」权限，
+# 由各自路由的 ai.use 能力依赖把关，不应被管理员令牌拦截。
+# 新增 AI 后台配置写接口时，必须在此登记，否则将不受管理员保护。
+ADMIN_AI_WRITE_PATHS = (
+    "/api/ai/test",
+    "/api/ai/refs/upload",
+    "/api/ai/refs/toggle",
+    "/api/ai/refs/delete",
+    "/api/ai/logs/clear",
+    "/api/ai/skills/import",
 )
 
 
@@ -53,7 +66,9 @@ def admin_token() -> str:
 def _is_admin_protected(path: str) -> bool:
     """路径是否命中管理员写保护前缀（去掉结尾斜杠后匹配）。"""
     p = path.rstrip("/")
-    return any(p == pref.rstrip("/") or p.startswith(pref) for pref in ADMIN_WRITE_PREFIXES)
+    if any(p == pref.rstrip("/") or p.startswith(pref) for pref in ADMIN_WRITE_PREFIXES):
+        return True
+    return any(p == pref.rstrip("/") or p.startswith(pref) for pref in ADMIN_AI_WRITE_PATHS)
 
 
 def install(app: Any) -> None:
