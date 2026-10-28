@@ -12,14 +12,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from checkers.rag_store import (
-    clear_kb as rag_clear,
-    delete_docs as rag_delete_docs,
-    doc_file as rag_doc_file,
-    index_docs as rag_index_docs,
-    kb_status as rag_kb_status,
-    ask as rag_ask,
-)
 from checkers.valuation.valuation_api import router as valuation_router
 
 from server import security

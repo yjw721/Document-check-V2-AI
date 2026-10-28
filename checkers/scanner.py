@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import os
+import threading
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from checkers.base import (
@@ -82,10 +83,28 @@ def _dispatch(path: str, config: RuleConfig, name: str, ftype: str,
 
 
 def _run_with_timeout(fn: Callable, args: tuple, timeout: float) -> FileResult:
-    """在独立线程中执行检测，超时则抛出 concurrent.futures.TimeoutError。"""
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-        fut = ex.submit(fn, *args)
-        return fut.result(timeout=timeout)
+    """在独立守护线程中执行检测，超过 timeout 秒立即返回。
+
+    不能用 ThreadPoolExecutor + fut.result(timeout) 实现：with 块退出时的
+    shutdown(wait=True) 仍会阻塞等待卡住的解析线程跑完，超时形同虚设。
+    守护线程方案让调用方在超时后立即拿到控制权；卡住的线程随进程退出回收。
+    """
+    box: Dict[str, Any] = {}
+
+    def _run() -> None:
+        try:
+            box["result"] = fn(*args)
+        except Exception as exc:  # noqa: BLE001 - 原样转交调用方统一处理
+            box["error"] = exc
+
+    th = threading.Thread(target=_run, daemon=True, name="doccheck-parse")
+    th.start()
+    th.join(timeout)
+    if th.is_alive():
+        raise concurrent.futures.TimeoutError()
+    if "error" in box:
+        raise box["error"]
+    return box["result"]
 
 
 def _is_blank(result: FileResult) -> bool:

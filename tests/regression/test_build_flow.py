@@ -32,7 +32,10 @@ PAYLOAD = {
     "rules": [
         {"name": "口语化表达", "match_mode": "keyword", "pattern": f"立马搞定{_TAG}",
          "severity": "medium", "suggestion": f"立即完成{_TAG}"},
-        {"name": "金额单位缺失", "match_mode": "regex", "pattern": r"金额\d+\s*元(?!.*万元)",
+        # 正则同样带时间戳标签：库内一旦已有同式规则（如人工采纳过的历史产出），
+        # 去重过滤会拒绝入库，导致「产出规则 2 条」误报失败
+        {"name": "金额单位缺失", "match_mode": "regex",
+         "pattern": rf"金额\d+\s*元{_TAG}(?!.*万元)",
          "severity": "high", "suggestion": "金额单位统一用「万元」"},
     ],
 }
@@ -94,6 +97,14 @@ r = client.post("/api/ai/build/text", json={"text": ""})
 chk("空文本被拦截", r.json().get("ok") is False, str(r.json()))
 
 print("\n== 3. 完整生成流程（桩模型）==")
+# 隔离草稿写入：build 路由会把产出落进生产 config/data_store.json（用户草稿箱），
+# 测试期间重定向为内存记录，跑完还原（草稿箱持久化契约由 test_datastore_drafts 覆盖）
+import checkers.datastore as _ds_mod  # noqa: E402
+_test_drafts = []
+_orig_add_draft = _ds_mod.add_draft
+_ds_mod.add_draft = lambda bid, kind, result, *a, **k: (
+    _test_drafts.append((bid, kind)) or f"test{len(_test_drafts)}")
+
 ai_builder_module._call_ollama = fast_stub()
 r = client.post("/api/ai/build/dialogue", json={"text": "请生成截止日期相关规则"})
 j = r.json()
@@ -135,6 +146,7 @@ for _ in range(30):
         break
 chk("任务已停止", st.get("done") is True and st.get("running") is False, str(st.get("message")))
 chk("标记为已中止", st.get("cancelled") is True, str(st))
+_ds_mod.add_draft = _orig_add_draft   # 还原草稿写入，后续用例（如有）不受影响
 
 print("\n== 5. 历史任务回收（不再无限占用内存）==")
 buildrt._BUILD_LOGS.clear()

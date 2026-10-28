@@ -53,7 +53,12 @@ chk("保留条目带类别与举证", items and items[0]["category"] == "表格�
 
 rec = ai_checker.build_prompt_record({"enabled": True, "mode": "local", "model": "qwen3:8b"})
 chk("提示词记录含主提示词", "逐句、逐单元格通读" in rec["system_prompt"])
-chk("提示词记录含 9 类维度", "交叉一致性" in rec["system_prompt"] and "规范符合性" in rec["system_prompt"])
+# 本地小模型用精简 5 类清单（长指令稀释注意力），断言其特征维度且不含联网专属维度
+chk("提示词记录含本地精简 5 类清单", "交叉一致性" in rec["system_prompt"]
+    and "规范符合性" not in rec["system_prompt"])
+rec_online = ai_checker.build_prompt_record({"enabled": True, "mode": "online", "model": "test-model"})
+chk("提示词记录含联网 9 类维度", "交叉一致性" in rec_online["system_prompt"]
+    and "规范符合性" in rec_online["system_prompt"])
 chk("提示词记录含深度复核提示", "深度复核" in (rec["review_prompt"] or ""))
 chk("提示词记录含置信度条款", "confidence" in rec["system_prompt"])
 chk("深度复核默认开启", rec["deep_review"] is True)
