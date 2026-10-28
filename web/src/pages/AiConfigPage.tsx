@@ -401,6 +401,23 @@ function BasicTab({
           <Field label="严格取证（引用须逐字命中原文）">
             <HoloSwitch checked={ai.strict_grounding ?? true} onChange={(v) => setAi({ strict_grounding: v })} />
           </Field>
+          <Field label="思考链 think（思考型模型）">
+            <HoloSelect
+              value={ai.think === false ? "off" : ai.think === true ? "on" : "default"}
+              onChange={(e) =>
+                setAi({
+                  think: e.target.value === "on" ? true : e.target.value === "off" ? false : null,
+                })
+              }
+            >
+              <option value="default">默认（不下发，兼容旧模型）</option>
+              <option value="off">关闭思考链（直接输出答案）</option>
+              <option value="on">开启思考链</option>
+            </HoloSelect>
+          </Field>
+          <p className="mt-1 text-[11px] leading-relaxed text-white/35">
+            qwen3 等思考型模型会在 thinking 中消耗大量 token，使答案混入推理文本、易触发「未按契约输出 JSON」的误判；选择「关闭思考链」会向 Ollama 透传 think=false，让其直接输出合规 JSON。非思考型模型与旧版 Ollama 不受影响。
+          </p>
           <Field label="置信度门槛（低于则丢弃）">
             <HoloInput
               type="number"

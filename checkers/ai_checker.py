@@ -608,6 +608,14 @@ def _call_ollama(cfg: Dict[str, Any], messages: List[Dict[str, str]],
     content = msg.get("content")
     if not isinstance(content, str):
         raise AiError(f"Ollama 响应缺少 message.content：{str(resp)[:120]}")
+    # 思考型模型（qwen3 / qwen3.5 等）偶发把最终答案全部输出在 thinking 流、
+    # content 为空：直接返回空会被上层静默记 0 条命中（报告零详情）。
+    # 以 thinking 兜底，下游 _parse_issues 自带 JSON 提取 + 严格取证，不会引入误报。
+    if not content.strip():
+        thinking = msg.get("thinking") or ""
+        if thinking.strip():
+            return thinking
+        raise AiError("模型返回为空（content 与 thinking 均无输出），建议重试或更换模型")
     return content
 
 
@@ -631,7 +639,8 @@ def _call_ollama_stream(url: str, payload: Dict[str, Any],
     """
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-    buf: List[str] = []
+    buf: List[str] = []          # content 增量（最终答案）
+    think_buf: List[str] = []    # thinking 增量（兜底用，见函数尾注）
     deadline = time.monotonic() + float(timeout)
     try:
         with urllib.request.urlopen(req, timeout=float(timeout)) as resp:
@@ -653,6 +662,7 @@ def _call_ollama_stream(url: str, payload: Dict[str, Any],
                     on_token(content, "content")
                 thinking = msg.get("thinking")
                 if isinstance(thinking, str) and thinking:
+                    think_buf.append(thinking)
                     on_token(thinking, "thinking")
                 if chunk.get("done"):
                     break
@@ -669,7 +679,15 @@ def _call_ollama_stream(url: str, payload: Dict[str, Any],
         raise AiError(_timeout_msg(float(timeout))) from None
     except (urllib.error.URLError, OSError) as exc:
         raise AiError(_net_reason(exc, float(timeout))) from exc
-    return "".join(buf)
+    # 与非流式路径同一策略：content 为空时以 thinking 兜底，两者皆空按失败处理
+    # （否则思考模型偶发的「答案全在 thinking」会被静默记 0 条命中）
+    content_out = "".join(buf).strip()
+    if not content_out:
+        think_out = "".join(think_buf).strip()
+        if think_out:
+            return think_out
+        raise AiError("模型返回为空（content 与 thinking 均无输出），建议重试或更换模型")
+    return content_out
 
 
 def _set_sock_read_timeout(resp, seconds: float) -> None:
@@ -1655,6 +1673,59 @@ def _base_messages(ai: Dict[str, Any], sys_txt: str, text: str,
     return msgs
 
 
+# 判定「字典是否像一条问题条目」的字段白名单：仅当命中这些与输出契约相关的
+# 字段时才视为问题项，避免把思考型模型推理文本中散落的 JSON 碎片（如
+# {"name": "x", "val": 1} / {"Role": "analyst"}）误判为合规结果。
+_ISSUE_LIKE_KEYS = {
+    # 问题主体
+    "issue", "问题", "问题描述", "风险点", "异常", "缺陷", "problem",
+    # 引用取证
+    "quote", "引用", "引文", "原文", "evidence", "证据",
+    # 严重性与处置
+    "severity", "级别", "严重程度", "风险等级", "level",
+    "suggestion", "建议", "整改建议", "修改建议", "处理意见", "recommendation",
+    # 分类与说明
+    "category", "类型", "分类", "类别", "问题类型", "风险类别",
+    "detail", "说明", "详情", "描述", "分析", "解读", "description",
+}
+
+
+def _looks_like_issue(d: Any) -> bool:
+    """字典是否像一条问题条目（含输出契约相关字段）。"""
+    if not isinstance(d, dict):
+        return False
+    keys = set(k.lower() if isinstance(k, str) else k for k in d.keys())
+    return bool(keys & _ISSUE_LIKE_KEYS)
+
+
+def _has_json_structure(text: str) -> bool:
+    """返回文本是否包含符合输出契约的 JSON（对象数组）。
+
+    用于区分「合法的空结果（[]）」与「根本没按输出契约输出 JSON」：
+    前者是真实的"未发现问题"，后者是格式违规（应重试/记失败，而不是静默记 0）。
+
+    收紧判定：必须是「对象数组」或「对象包裹的对象数组」形状，且数组中的对象
+    必须看起来像问题条目（命中 issue/quote/severity/suggestion 等契约字段）。
+    思考型模型常把 token 耗在思考链上，输出大段英文推理文本并在其中散落零星
+    JSON 碎片（{"name": "x"} / [1, 2] / {"Role": …}），这些碎片若被放行会解出
+    0 条且无报错，造成「看似成功、实际静默记 0」的假阴性。因此碎片一律判为
+    不合规，触发重试/记失败。
+    """
+    data = _extract_json(text)
+    if isinstance(data, list):
+        # 空数组 [] 是合法的"未发现问题"结果，放行
+        if not data:
+            return True
+        return all(isinstance(x, dict) and _looks_like_issue(x) for x in data)
+    if isinstance(data, dict):
+        return any(
+            isinstance(v, list) and v
+            and all(isinstance(x, dict) and _looks_like_issue(x) for x in v)
+            for v in data.values()
+        )
+    return False
+
+
 def _request_issues(ai: Dict[str, Any], mode: str, msgs: List[Dict[str, str]],
                     retry_n: int, min_confidence: float,
                     source_text: str,
@@ -1675,6 +1746,7 @@ def _request_issues(ai: Dict[str, Any], mode: str, msgs: List[Dict[str, str]],
         if cached is not None:
             return _parse_issues(cached, source_text, min_confidence, collect=collect), None
     last_err: Optional[str] = None
+    send_msgs = msgs
     for attempt in range(retry_n + 1):
         if cancel and cancel():
             return [], "任务已取消"
@@ -1683,8 +1755,27 @@ def _request_issues(ai: Dict[str, Any], mode: str, msgs: List[Dict[str, str]],
         try:
             with _ai_sem(ai):
                 _ai_throttle(ai)
-                content = _call_ollama(ai, msgs, on_token=on_token) if mode == "local" \
-                    else _call_openai(ai, msgs)
+                # think 参数可选透传（仅显式配置时下发）：qwen3 等思考型模型配置
+                # think=false 可跳过思考链直接输出答案，规避「答案全在 thinking /
+                # content 混推理文本」的格式问题；未配置时不发送该字段（兼容
+                # 不支持 think 的旧版 Ollama 与非思考模型）
+                _think = ai.get("think") if "think" in ai else None
+                content = _call_ollama(ai, send_msgs, think=_think,
+                                       on_token=on_token) if mode == "local" \
+                    else _call_openai(ai, send_msgs)
+            if not _has_json_structure(content):
+                # 模型只输出了推理/说明文本、未按输出契约给出 JSON（常见于思考型
+                # 模型把 token 耗在思考上）：视为格式违规走重试；重试耗尽后该段
+                # 记失败，避免「看起来成功、实际静默记 0 条命中」
+                last_err = "模型未按输出契约返回 JSON 数组（仅输出推理或说明文本）"
+                # 重试附带纠偏指令（明确指出上一轮问题），显著提高第二次命中率
+                send_msgs = list(msgs) + [{
+                    "role": "user",
+                    "content": "你上一轮没有按输出契约返回 JSON 数组，只输出了推理或说明文字。"
+                               "请重新作答：只输出 JSON 数组本身，不要任何推理过程、解释"
+                               "或 Markdown 代码块；没有问题时输出 []。",
+                }]
+                continue
             if ckey:
                 _cache_put(ckey, content, int(cache_cfg.get("max_entries") or 200))
             return _parse_issues(content, source_text, min_confidence, collect=collect), None

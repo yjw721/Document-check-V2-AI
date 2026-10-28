@@ -142,6 +142,10 @@ DEFAULTS: Dict[str, Any] = {
         # —— 增强审核力度 ——
         "deep_review": True,                   # 每段追加一轮「补漏复核」请求（耗时约翻倍，关闭可提速）
         "strict_grounding": True,              # 严格取证：引用须逐字命中原文（短引用须完整命中），抑制幻觉
+        # think 透传（仅思考型模型生效）：None=不下发该字段（兼容旧版 Ollama 与非思考模型）；
+        # False=qwen3 等思考模型跳过思考链直接输出答案（规避「答案全在 thinking 内」的格式问题）；
+        # True=强制开启思考。配置后由 checkers.ai_checker._request_issues 透传给 Ollama 的 think 参数。
+        "think": None,
         "min_confidence": 0.45,                # 置信度门槛：候选收集阶段放宽，由规则复合作最终判定（0 = 不过滤）
         "rule_recheck": True,                  # 规则复核：AI 广撒网后由确定性验算剔除误报、提升确证项
         # —— 专项技能（SKILL）——

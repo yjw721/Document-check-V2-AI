@@ -321,6 +321,7 @@ export interface AiSettings {
   /* —— 增强审核力度 —— */
   deep_review?: boolean;
   strict_grounding?: boolean;
+  think?: boolean | null;            // 思考链开关（仅思考型模型生效）：undefined/Null=不下发；false=跳过思考直接输出；true=强制开启
   min_confidence?: number;
   /* —— 专项技能（SKILL） —— */
   active_skills?: string[];        // 启用的技能 id 集合（内置 + 自定义）
