@@ -47,3 +47,6 @@ config/knowledge/*.json.*
 config/knowledge/knowledge.json.git_baseline_backup
 .tmp_*
 _shots/
+
+# IDE
+.idea/

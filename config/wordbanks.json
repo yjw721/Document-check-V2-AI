@@ -208,6 +208,41 @@
           "enabled": false
         }
       ]
+    },
+    {
+      "id": "wb64d7435af34d",
+      "name": "测试词库",
+      "module": "word",
+      "scope": "all",
+      "enabled": true,
+      "entries": []
+    },
+    {
+      "id": "wb14b94581304f",
+      "name": "易混淆词",
+      "module": "word",
+      "scope": "all",
+      "enabled": true,
+      "entries": [
+        {
+          "id": "ede4d0af4f84c",
+          "keyword": "截止日期89602",
+          "tag": "易混淆词",
+          "suggestion": "截至日期89602",
+          "enabled": true,
+          "source": "ai_dialogue",
+          "source_label": "AI对话创建"
+        },
+        {
+          "id": "e0d1b978d07ef",
+          "keyword": "帐号89602",
+          "tag": "易混淆词",
+          "suggestion": "账号89602",
+          "enabled": true,
+          "source": "ai_dialogue",
+          "source_label": "AI对话创建"
+        }
+      ]
     }
   ]
 }

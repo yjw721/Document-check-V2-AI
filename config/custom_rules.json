@@ -462,12 +462,12 @@
       "name": "AI 生成规则",
       "category": "expression",
       "scope": "all",
-      "enabled": false,
+      "enabled": true,
       "rules": [
         {
           "id": "r27a3ab3b",
           "name": "错误表述",
-          "enabled": false,
+          "enabled": true,
           "match_mode": "keyword",
           "pattern": "评估基准日期",
           "severity": "medium",
@@ -477,7 +477,7 @@
         {
           "id": "r9f802ac7",
           "name": "错误表述",
-          "enabled": false,
+          "enabled": true,
           "match_mode": "keyword",
           "pattern": "评估方法论",
           "severity": "medium",
@@ -487,7 +487,7 @@
         {
           "id": "r19ee742e",
           "name": "错误表述",
-          "enabled": false,
+          "enabled": true,
           "match_mode": "keyword",
           "pattern": "评估价值类型",
           "severity": "medium",
@@ -497,7 +497,7 @@
         {
           "id": "r5ef412a8",
           "name": "错误表述",
-          "enabled": false,
+          "enabled": true,
           "match_mode": "keyword",
           "pattern": "评估对象类型",
           "severity": "medium",
@@ -507,7 +507,7 @@
         {
           "id": "r6b65ea2e",
           "name": "错误表述",
-          "enabled": false,
+          "enabled": true,
           "match_mode": "keyword",
           "pattern": "评估目的说明",
           "severity": "medium",
@@ -517,7 +517,7 @@
         {
           "id": "r60a56d3b",
           "name": "错误表述",
-          "enabled": false,
+          "enabled": true,
           "match_mode": "keyword",
           "pattern": "评估程序步骤",
           "severity": "medium",
@@ -527,7 +527,7 @@
         {
           "id": "r1c6c4ac9",
           "name": "错误表述",
-          "enabled": false,
+          "enabled": true,
           "match_mode": "keyword",
           "pattern": "评估依据文件",
           "severity": "medium",
@@ -537,7 +537,7 @@
         {
           "id": "r5d873a3d",
           "name": "错误表述",
-          "enabled": false,
+          "enabled": true,
           "match_mode": "keyword",
           "pattern": "评估结论陈述",
           "severity": "medium",
@@ -547,7 +547,7 @@
         {
           "id": "r9a3224bd",
           "name": "错误表述",
-          "enabled": false,
+          "enabled": true,
           "match_mode": "keyword",
           "pattern": "评估报告内容",
           "severity": "medium",
@@ -557,7 +557,7 @@
         {
           "id": "r5db7e526",
           "name": "错误表述",
-          "enabled": false,
+          "enabled": true,
           "match_mode": "keyword",
           "pattern": "评估机构名称",
           "severity": "medium",
@@ -582,6 +582,68 @@
           "severity": "low",
           "tag": "",
           "suggestion": "正确写法yy"
+        }
+      ]
+    },
+    {
+      "id": "g87cf0724",
+      "name": "新规则组",
+      "category": "format_error",
+      "scope": "all",
+      "enabled": true,
+      "rules": []
+    },
+    {
+      "id": "g0b2b6edb70f4",
+      "name": "AI生成·AI对话创建·2026-10-27 10:07:46",
+      "category": "expression",
+      "scope": "all",
+      "enabled": true,
+      "rules": [
+        {
+          "id": "rc689531db21c",
+          "name": "测试规则1",
+          "enabled": true,
+          "match_mode": "keyword",
+          "pattern": "错别字",
+          "severity": "medium",
+          "tag": "",
+          "suggestion": "修正",
+          "source": "ai_dialogue",
+          "source_label": "AI对话创建"
+        }
+      ]
+    },
+    {
+      "id": "g7002c27f5d25",
+      "name": "AI生成·AI对话创建·2026-10-27 16:26:43",
+      "category": "expression",
+      "scope": "all",
+      "enabled": true,
+      "rules": [
+        {
+          "id": "rd45b0dcb01f6",
+          "name": "口语化表达",
+          "enabled": true,
+          "match_mode": "keyword",
+          "pattern": "立马搞定89602",
+          "severity": "medium",
+          "tag": "",
+          "suggestion": "立即完成89602",
+          "source": "ai_dialogue",
+          "source_label": "AI对话创建"
+        },
+        {
+          "id": "r65b062ad3383",
+          "name": "金额单位缺失",
+          "enabled": true,
+          "match_mode": "regex",
+          "pattern": "金额\\d+\\s*元(?!.*万元)",
+          "severity": "high",
+          "tag": "",
+          "suggestion": "金额单位统一用「万元」",
+          "source": "ai_dialogue",
+          "source_label": "AI对话创建"
         }
       ]
     }
